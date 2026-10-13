@@ -2,7 +2,7 @@
 
 Reference and control your existing, logged-in Chrome and Edge tabs from DeepSeek Harness, with compact page context and batched browser actions.
 
-[![CI](https://img.shields.io/github/actions/workflow/status/SheepofSheep/dsh-browser-tabs/ci.yml?branch=main&label=CI)](https://github.com/SheepofSheep/dsh-browser-tabs/actions/workflows/ci.yml)
+[![CI](https://img.shields.io/github/actions/workflow/status/SheepofSheep/dsh-doyourweb/ci.yml?branch=main&label=CI)](https://github.com/SheepofSheep/dsh-doyourweb/actions/workflows/ci.yml)
 [![License](https://img.shields.io/badge/license-MIT-green)](LICENSE)
 [![Node.js](https://img.shields.io/badge/Node.js-%3E%3D22-339933)](package.json)
 [![Playwright](https://img.shields.io/badge/Playwright-1.64.0-2EAD33)](package.json)
@@ -100,16 +100,24 @@ Only tabs referenced by the user in the current conversation are available to th
 
 ### Install the DSH Plugin
 
+For npm installation, open **Plugins > Add Plugin** in DSH, select the **official npm registry**, and enter:
+
+```text
+dsh-doyourweb
+```
+
+This requires a published package. If the registry returns `404`, use the local installation below. Mirrors may take time to sync a newly published version.
+
+### Build and Install Locally
+
 ```sh
-git clone https://github.com/SheepofSheep/dsh-browser-tabs.git dsh-doyourweb
+git clone https://github.com/SheepofSheep/dsh-doyourweb.git
 cd dsh-doyourweb
 npm ci
 npm run build
 ```
 
 In DSH, open **Plugins > Add Plugin** and enter the **absolute path to this built project directory**. The bridge starts when the plugin activates. No separate development server is required.
-
-The repository URL retains its original name, `dsh-browser-tabs`; the project and package are named `dsh-doyourweb`. The package is not currently published to npm.
 
 ### Connect the Browser
 
@@ -227,7 +235,7 @@ CI is configured for unit tests on Windows and Linux, plus isolated headless Chr
 
 ### Roadmap
 
-This README describes the implemented `0.1.0` release. No delivery schedule for later versions is announced. Report bugs and discuss changes in [Issues](https://github.com/SheepofSheep/dsh-browser-tabs/issues).
+This README describes the implemented `0.1.0` release. No delivery schedule for later versions is announced. Report bugs and discuss changes in [Issues](https://github.com/SheepofSheep/dsh-doyourweb/issues).
 
 ### FAQ
 

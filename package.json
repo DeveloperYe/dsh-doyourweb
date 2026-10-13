@@ -4,9 +4,10 @@
   "description": "Reference and control existing Chrome and Edge tabs from DeepSeek Harness",
   "type": "module",
   "license": "MIT",
-  "repository": { "type": "git", "url": "git+https://github.com/SheepofSheep/dsh-browser-tabs.git" },
-  "homepage": "https://github.com/SheepofSheep/dsh-browser-tabs#readme",
-  "bugs": { "url": "https://github.com/SheepofSheep/dsh-browser-tabs/issues" },
+  "repository": { "type": "git", "url": "git+https://github.com/SheepofSheep/dsh-doyourweb.git" },
+  "homepage": "https://github.com/SheepofSheep/dsh-doyourweb#readme",
+  "bugs": { "url": "https://github.com/SheepofSheep/dsh-doyourweb/issues" },
+  "publishConfig": { "access": "public", "registry": "https://registry.npmjs.org/" },
   "main": "lib/host.js",
   "exports": {
     ".": "./lib/host.js",

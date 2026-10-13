@@ -2,7 +2,7 @@
 
 让 DeepSeek Harness 引用并操作你已经打开、保持登录的 Chrome 和 Edge 页面，用精简的页面上下文和批量操作减少重复读取。
 
-[![CI](https://img.shields.io/github/actions/workflow/status/SheepofSheep/dsh-browser-tabs/ci.yml?branch=main&label=CI)](https://github.com/SheepofSheep/dsh-browser-tabs/actions/workflows/ci.yml)
+[![CI](https://img.shields.io/github/actions/workflow/status/SheepofSheep/dsh-doyourweb/ci.yml?branch=main&label=CI)](https://github.com/SheepofSheep/dsh-doyourweb/actions/workflows/ci.yml)
 [![License](https://img.shields.io/badge/license-MIT-green)](LICENSE)
 [![Node.js](https://img.shields.io/badge/Node.js-%3E%3D22-339933)](package.json)
 [![Playwright](https://img.shields.io/badge/Playwright-1.64.0-2EAD33)](package.json)
@@ -100,16 +100,24 @@ flowchart LR
 
 ### 安装 DSH 插件
 
+通过 npm 安装时，在 DSH 打开 **插件 > 添加插件**，安装源选择 **npm 官方源**，输入：
+
+```text
+dsh-doyourweb
+```
+
+这种方式需要包已经发布。若官方源返回 `404`，可用下面的本地安装方式。新版本在镜像源中的同步可能有延迟。
+
+### 构建并安装本地版本
+
 ```sh
-git clone https://github.com/SheepofSheep/dsh-browser-tabs.git dsh-doyourweb
+git clone https://github.com/SheepofSheep/dsh-doyourweb.git
 cd dsh-doyourweb
 npm ci
 npm run build
 ```
 
 在 DSH 中打开 **插件 > 添加插件**，填入**构建完成后的项目目录绝对路径**。插件启用时会启动桥接服务，不需要另开开发服务器。
-
-仓库地址仍使用原名称 `dsh-browser-tabs`，项目和包名为 `dsh-doyourweb`。目前尚未发布到 npm。
 
 ### 连接浏览器
 
@@ -227,7 +235,7 @@ CI 配置了 Windows、Linux 单元测试，以及 Linux 上隔离的无头 Chro
 
 ### Roadmap
 
-本文只介绍已经实现的 `0.1.0` 版本，暂未公布后续版本的交付时间。问题反馈和功能讨论见 [Issues](https://github.com/SheepofSheep/dsh-browser-tabs/issues)。
+本文只介绍已经实现的 `0.1.0` 版本，暂未公布后续版本的交付时间。问题反馈和功能讨论见 [Issues](https://github.com/SheepofSheep/dsh-doyourweb/issues)。
 
 ### FAQ
 

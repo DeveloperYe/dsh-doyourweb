@@ -29,8 +29,9 @@ function event() {
 }
 
 const flush = () => new Promise(resolve => setImmediate(resolve));
+let uuidSequence = 0;
 
-function worker(stored = {}, tabs = [], code = bundle.outputFiles[0].text) {
+function worker(stored = {}, tabs = [], code = bundle.outputFiles[0].text, session = {}) {
   let load;
   const sockets = [], timers = new Map(), detached = [], fetched = [], badges = [];
   let sequence = 0;
@@ -52,10 +53,11 @@ function worker(stored = {}, tabs = [], code = bundle.outputFiles[0].text) {
     alarms: { onAlarm: event(), create: noop },
     storage: { local: { get: () => new Promise(resolve => { load = resolve; }),
       set: async values => Object.assign(stored, values),
-      remove: async keys => { for (const key of [].concat(keys)) delete stored[key]; } } },
+      remove: async keys => { for (const key of [].concat(keys)) delete stored[key]; } },
+      session: { get: async () => session, set: async values => Object.assign(session, values) } },
   };
   vm.runInNewContext(code, { chrome, WebSocket: Socket,
-    navigator: { userAgent: "Edg/156" }, crypto: { randomUUID: () => "test-profile" },
+    navigator: { userAgent: "Edg/156" }, crypto: { randomUUID: () => `test-id-${++uuidSequence}` },
     setTimeout: (fn, delay) => { const id = ++sequence; timers.set(id, { fn, delay }); return id; },
     setInterval: (fn, delay) => { const id = ++sequence; timers.set(id, { fn, delay, interval: true }); return id; },
     clearTimeout: id => timers.delete(id), clearInterval: id => timers.delete(id), console, URL, AbortSignal,
@@ -83,6 +85,23 @@ test("browser startup and alarms wait for saved settings without opening the pop
   const inventory = running.sockets[0].messages.find(message => message.method === "dsh.inventory");
   assert.equal(inventory.params.profile, "saved-profile");
   assert.ok([...running.timers.values()].some(timer => timer.interval && timer.delay === 20000));
+});
+
+test("tab identity survives worker restart but changes with a new browser lifetime", async () => {
+  const stored = { profile: "saved-profile" };
+  const session = {};
+  async function identity(storage) {
+    const running = worker(stored, [], bundle.outputFiles[0].text, storage);
+    running.initialize();
+    await flush();
+    running.sockets[0].open();
+    await flush();
+    return running.sockets[0].messages.find(message => message.method === "dsh.inventory").params.browserSession;
+  }
+  const first = await identity(session);
+  assert.equal(typeof first, "string");
+  assert.equal(await identity(session), first, "service-worker restarts must not revoke open tabs");
+  assert.notEqual(await identity({}), first, "tab ids may be reused after a full browser restart");
 });
 
 test("a saved pause survives startup and reconnect alarms", async () => {
@@ -173,6 +192,28 @@ test("an unpaired extension shows its code, stores the handed token, and reconne
   running.sockets[1].open();
   await flush();
   assert.equal(running.badges.at(-1), "", "the pairing badge is cleared once paired and connected");
+});
+
+test("unpaired tab updates disclose no inventory and an expired socket requests a new code", async () => {
+  const running = worker({}, [{ id: 7, title: "Private", url: "https://example.com" }], pairingBundle.outputFiles[0].text);
+  running.initialize();
+  await flush();
+  const connection = running.sockets[0];
+  connection.open();
+  running.chrome.tabs.onUpdated.fire();
+  [...running.timers.values()].find(timer => timer.delay === 150).fn();
+  await flush();
+  assert.equal(connection.messages.some(message => message.method === "dsh.inventory"), false);
+  await connection.onmessage({ data: JSON.stringify({ method: "dsh.pairing",
+    params: { code: "1234", expiresAt: Date.now() + 1000 } }) });
+  await connection.close();
+  const listener = running.chrome.runtime.onMessage.listeners[0];
+  const status = await new Promise(resolve => listener({ type: "status" }, {}, resolve));
+  assert.equal(status.pairing, undefined);
+  [...running.timers.values()].find(timer => !timer.interval && timer.delay === 1000).fn();
+  await flush();
+  assert.equal(running.sockets.length, 2);
+  assert.deepEqual([...running.sockets[1].protocols], ["dsh-browser"]);
 });
 
 test("unpairing clears the stored token and returns the extension to pairing", async () => {

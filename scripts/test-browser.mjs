@@ -21,7 +21,7 @@ const server = createServer((req, response) => {
 });
 await new Promise(resolve => server.listen(0, "127.0.0.1", resolve));
 const fixtureUrl = `http://127.0.0.1:${server.address().port}`;
-const bridge = new BrowserBridge({ home: path.join(home, "bridge"), port: 43188 });
+const bridge = new BrowserBridge({ home: path.join(home, "bridge"), port: 43188, idleTimeoutMs: 500 });
 let browser;
 async function launchBrowser() {
   return chromium.launchPersistentContext(path.join(home, "profile"), {
@@ -103,18 +103,44 @@ try {
   const nameRef = initial.content.match(/textbox "Name" \[ref=(e\d+)\]/)?.[1];
   const saveRef = initial.content.match(/button "Save" \[ref=(e\d+)\]/)?.[1];
   assert.ok(nameRef && saveRef, initial.content);
-  const result = await engine.act(tab.ref, { snapshot: initial.snapshot, steps: [
+  const result = await engine.act(tab.ref, { snapshot: initial.snapshot, observe: "summary", steps: [
     { op: "fill", ref: nameRef, value: "DSH" }, { op: "click", ref: saveRef },
+    { op: "wait", selector: "#out", state: "visible", timeout: 2000 },
+    { op: "extract", selector: "#out", fields: ["text"] },
   ] });
-  assert.equal(result.completed.length, 2, JSON.stringify(result));
+  assert.equal(result.completed.length, 4, JSON.stringify(result));
+  assert.equal(result.results[0].rows[0].text, "Saved DSH");
+  assert.equal(result.snapshot, undefined, "summary must not collect another full snapshot");
   assert.equal(await page.locator("#out").textContent(), "Saved DSH");
-  const attachedPage = await bridge.page(tab.ref);
-  await attachedPage.frameLocator("iframe").getByRole("button", { name: "Frame button" }).click();
+  const frames = await engine.read(tab.ref);
+  const frameRef = frames.content.match(/button "Frame button" \[ref=(f\d+e\d+)\]/)?.[1];
+  assert.ok(frameRef, frames.content);
+  const frameResult = await engine.act(tab.ref, { snapshot: frames.snapshot, observe: "summary",
+    steps: [{ op: "click", ref: frameRef }] });
+  assert.equal(frameResult.completed.length, 1, JSON.stringify(frameResult));
   assert.equal(await page.frameLocator("iframe").getByRole("button").textContent(), "Frame clicked");
+  const beforeReload = await engine.read(tab.ref);
   await page.reload();
-  await assert.rejects(engine.act(tab.ref, { snapshot: result.snapshot, steps: [{ op: "click", selector: "#save" }] }), /stale/);
+  await assert.rejects(engine.act(tab.ref, { snapshot: beforeReload.snapshot, steps: [{ op: "click", selector: "#save" }] }), /stale/);
+  const beforeCancel = await engine.read(tab.ref);
+  const controller = new AbortController();
+  const cancelTimer = setTimeout(() => controller.abort(), 250);
+  const interrupted = await engine.act(tab.ref, { snapshot: beforeCancel.snapshot, steps: [
+    { op: "click", selector: "#missing" }, { op: "click", selector: "#save" },
+  ] }, controller.signal).finally(() => clearTimeout(cancelTimer));
+  assert.equal(interrupted.cancelled, true, JSON.stringify(interrupted));
+  assert.equal(interrupted.completed.length, 0);
+  assert.equal(interrupted.uncertainStep, 0);
+  const recovered = await engine.read(tab.ref);
+  assert.equal(recovered.lastAction.cancelled, true);
   const capture = await engine.capture(tab.ref);
   assert.ok(capture.path.endsWith(".png"));
+  for (let index = 0; index < 100 && bridge.relays.size; index++) await new Promise(resolve => setTimeout(resolve, 50));
+  assert.equal(bridge.relays.size, 0, "idle connections release the debugger");
+  assert.equal(engine.states.has(tab.ref), false, "idle snapshots are released too");
+  assert.equal(page.isClosed(), false);
+  await engine.read(tab.ref);
+  assert.equal(bridge.relays.size, 1, "another read safely reconnects after detach");
   await bridge.close();
   await page.locator("#name").fill("Still open");
   assert.equal(await page.locator("#name").inputValue(), "Still open");
@@ -129,13 +155,18 @@ try {
   const reopened = await browser.newPage();
   await reopened.goto(fixtureUrl);
   const afterRestart = await waitForTab();
-  assert.equal(parseRef(afterRestart.ref).profile, parseRef(tab.ref).profile);
+  assert.notEqual(parseRef(afterRestart.ref).profile, parseRef(tab.ref).profile,
+    "browser restart rotates tab identity even if numeric IDs are reused");
+  assert.throws(() => bridge.resolve(tab.ref), /offline|session/i);
   await engine.read(afterRestart.ref);
-  console.log("PASS: one-time code pairing with the shipped extension folder, existing tab inventory and cached icons without popup, automatic reconnection after DSH/browser restarts, authenticated CDP, compact refs, batched fill/click, iframe, stale navigation, screenshot, release without closing existing tab.");
+  engine.close();
+  console.log("PASS: code pairing, cached tab icons, background reconnect, browser-lifetime authorization, authenticated CDP, batched fill/click/wait/extract, summary output, iframe refs through the engine, stale navigation, in-flight cancellation, screenshot, idle detach and reattach without closing the tab.");
 } finally {
   await bridge.close();
   await browser?.close();
   await new Promise(resolve => server.close(resolve));
   // Only the fresh disposable directory returned by mkdtemp is removed.
+  assert.equal(path.dirname(path.resolve(home)), path.resolve(os.tmpdir()));
+  assert.ok(path.basename(home).startsWith("dsh-browser-test-"));
   await rm(home, { recursive: true, force: true });
 }

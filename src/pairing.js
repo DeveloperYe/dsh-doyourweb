@@ -73,6 +73,9 @@ export class Pairings {
 
   prune() {
     const now = this.now();
-    for (const [id, entry] of this.pending) if (entry.expires <= now) this.pending.delete(id);
+    for (const [id, entry] of this.pending) if (entry.expires <= now) {
+      this.pending.delete(id);
+      entry.socket.close?.(1000, "Pairing expired");
+    }
   }
 }

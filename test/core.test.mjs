@@ -30,6 +30,7 @@ test("tab identities round-trip and mentions cannot change Markdown structure", 
   const ref = tabRef("abc-123", 42);
   assert.deepEqual(parseRef(ref), { profile: "abc-123", tabId: 42 });
   assert.deepEqual(mentions(formatMention({ title: "x](malicious)\n", ref })), [ref]);
+  assert.ok(formatMention({ title: "x".repeat(60000), ref }).length < 180);
   assert.throws(() => parseRef("dsh-browser://abc/-1"));
   assert.throws(() => tabRef("bad/profile", 42));
   assert.equal(canControl("edge://settings"), false);
@@ -48,7 +49,7 @@ test("Remote descriptors carry strict codecs the DSH client gateway mounts", () 
     && typeof codec.create().parse === "function";
   assert.equal(descriptors.length, 3);
   for (const descriptor of descriptors) {
-    assert.match(descriptor.id, /^dsh-browser-tabs#browserTabs\/(list|setup|focus)$/);
+    assert.match(descriptor.id, /^dsh-doyourweb#browserTabs\/(list|setup|focus)$/);
     assert.equal(descriptor.invocation.kind, "direct");
     assert.deepEqual(descriptor.cancellation, { parameter: "signal" });
     assert.ok(strict(descriptor.result), `${descriptor.method} result needs a strict codec`);
@@ -201,6 +202,16 @@ test("pairing requests expire and unpaired sockets are forgotten", () => {
   assert.throws(() => pinnedExtensionId({}), /must pin a key/);
 });
 
+test("an expired pairing closes its socket so the extension can request a new code", () => {
+  let now = 1000;
+  let closed = false;
+  const pairings = new Pairings({ ttlMs: 50, now: () => now });
+  pairings.request({ close: () => { closed = true; } });
+  now += 51;
+  assert.deepEqual(pairings.list(), []);
+  assert.equal(closed, true);
+});
+
 test("pagination is bounded, explicit, and lossless", () => {
   const snapshot = { id: "s1", text: "first\nsecond line\nthird\n" };
   let offset = 0, output = "";
@@ -235,6 +246,39 @@ test("stale snapshot rejects before any action", async () => {
   assert.deepEqual(actions, []);
 });
 
+test("read budgets include escaped content and long metadata without losing pagination", async () => {
+  const url = `https://example.com/${"x".repeat(20000)}`;
+  const text = '- paragraph: "<untrusted>"\n'.repeat(40);
+  const page = { evaluate: async () => ({ epoch: 1, url }),
+    title: async () => "x".repeat(60000), locator: () => ({ ariaSnapshot: async () => text }) };
+  const engine = new BrowserEngine({ page: async () => page });
+  let result = await engine.read("dsh-browser://runtime/7", { limit: 400 });
+  assert.equal(result.metadataTruncated, true);
+  let content = "";
+  for (let index = 0; index < 50; index++) {
+    assert.ok(JSON.stringify(result).replace(/</g, "\\u003c").length <= 400);
+    content += result.content;
+    if (!result.cursor) break;
+    assert.ok(result.content.length > 0, "every cursor advances");
+    result = await engine.read("dsh-browser://runtime/7", { limit: 400, cursor: result.cursor });
+  }
+  assert.equal(content, text);
+});
+
+test("iframe refs returned by Playwright are accepted without guessing selectors", async () => {
+  const selected = [];
+  const page = { evaluate: async () => ({ epoch: 1, url: "https://example.com" }),
+    title: async () => "Frames", url: () => "https://example.com", locator: selector => ({
+      ariaSnapshot: async () => '- iframe [ref=e1]:\n  - button "Save" [ref=f2e7]',
+      click: async () => selected.push(selector),
+    }) };
+  const engine = new BrowserEngine({ page: async () => page });
+  const initial = await engine.read("tab");
+  const result = await engine.act("tab", { snapshot: initial.snapshot, steps: [{ op: "click", ref: "f2e7" }] });
+  assert.equal(result.completed.length, 1, JSON.stringify(result));
+  assert.deepEqual(selected, ["aria-ref=f2e7"]);
+});
+
 test("batch stops at failure and reports completed effects", async () => {
   const { engine, actions } = fixture();
   const read = await engine.read("tab");
@@ -247,6 +291,38 @@ test("batch stops at failure and reports completed effects", async () => {
   await assert.rejects(engine.act("tab", { snapshot: read.snapshot, steps: [{ op: "click", ref: "e1" }] }), /stale/);
 });
 
+test("wait and bounded extraction share a batch and summary skips another snapshot", async () => {
+  let snapshots = 0;
+  const waits = [];
+  const controller = new AbortController();
+  const page = { evaluate: async () => ({ epoch: 1, url: "https://example.com" }),
+    title: async () => "Test", locator: () => ({
+      ariaSnapshot: async () => { snapshots++; return '- button "Save" [ref=e1]'; },
+      click: async () => {}, waitFor: async options => waits.push(options),
+      evaluateAll: async (_fn, args) => {
+        assert.deepEqual(args.fields, ["text", "href"]);
+        return { rows: Array.from({ length: 20 }, () => ({ text: "<".repeat(200), href: "x".repeat(200) })),
+          totalRows: 30, truncated: true };
+      },
+    }) };
+  const engine = new BrowserEngine({ page: async () => page });
+  const initial = await engine.read("tab");
+  const result = await engine.act("tab", { snapshot: initial.snapshot, observe: "summary", steps: [
+    { op: "click", ref: "e1" },
+    { op: "wait", selector: ".results", state: "visible", timeout: 1500 },
+    { op: "extract", selector: ".results a", fields: ["text", "href"], maxRows: 20 },
+  ] }, controller.signal);
+  assert.equal(result.completed.length, 3, JSON.stringify(result));
+  assert.deepEqual(waits, [{ state: "visible", timeout: 1500, signal: controller.signal }]);
+  assert.equal(result.results[0].index, 2);
+  assert.ok(result.results[0].rows.length > 0);
+  assert.ok(result.results[0].omittedRows > 0);
+  assert.ok(JSON.stringify(result).replace(/</g, "\\u003c").length <= 1600);
+  assert.equal(snapshots, 1);
+  assert.equal(result.snapshot, undefined);
+  await assert.rejects(engine.act("tab", { snapshot: initial.snapshot, steps: [{ op: "click", ref: "e1" }] }), /stale/);
+});
+
 test("batch stops after navigation; old cursor and cancelled calls cannot act", async () => {
   const { engine, actions } = fixture();
   const read = await engine.read("tab");
@@ -257,6 +333,67 @@ test("batch stops after navigation; old cursor and cancelled calls cannot act", 
   assert.deepEqual(actions, ["navigate"]);
   await assert.rejects(engine.read("tab", { cursor: `${read.snapshot}:0` }), /stale/);
   await assert.rejects(engine.read("tab", {}, AbortSignal.abort()), /abort/i);
+});
+
+test("cancellation after an effect reports it and never leaves the old snapshot usable", async () => {
+  const controller = new AbortController();
+  const actions = [];
+  const page = { evaluate: async () => ({ epoch: 1, url: "https://example.com" }),
+    title: async () => "Test", url: () => "https://example.com", locator: () => ({
+      ariaSnapshot: async () => '- button "Submit" [ref=e1]',
+      click: async options => { actions.push("submit"); assert.equal(options.signal, controller.signal); controller.abort(); },
+    }) };
+  const engine = new BrowserEngine({ page: async () => page });
+  const initial = await engine.read("tab");
+  const interrupted = await engine.act("tab", { snapshot: initial.snapshot, steps: [
+    { op: "click", ref: "e1" }, { op: "click", ref: "e1" },
+  ] }, controller.signal);
+  assert.equal(interrupted.cancelled, true);
+  assert.deepEqual(interrupted.completed, [{ index: 0, op: "click" }]);
+  assert.deepEqual(actions, ["submit"]);
+  await assert.rejects(engine.act("tab", { snapshot: initial.snapshot, steps: [{ op: "click", ref: "e1" }] }), /stale/i);
+  const current = await engine.read("tab");
+  assert.deepEqual(current.lastAction.completed, [0]);
+  assert.equal(current.lastAction.cancelled, true);
+});
+
+test("an in-flight cancellation preserves completed steps and marks the uncertain effect", async () => {
+  const controller = new AbortController();
+  let clicks = 0;
+  const page = { evaluate: async () => ({ epoch: 1, url: "https://example.com" }),
+    title: async () => "Test", locator: () => ({
+      ariaSnapshot: async () => '- button "Submit" [ref=e1]',
+      fill: async () => {},
+      click: options => new Promise((_resolve, reject) => {
+        clicks++;
+        assert.equal(options.signal, controller.signal);
+        options.signal.addEventListener("abort", () => reject(options.signal.reason), { once: true });
+        controller.abort();
+      }),
+    }) };
+  const engine = new BrowserEngine({ page: async () => page });
+  const initial = await engine.read("tab");
+  const result = await engine.act("tab", { snapshot: initial.snapshot, steps: [
+    { op: "fill", ref: "e1", value: "name" }, { op: "click", ref: "e1" }, { op: "click", ref: "e1" },
+  ] }, controller.signal);
+  assert.deepEqual(result.completed, [{ index: 0, op: "fill" }]);
+  assert.equal(result.uncertainStep, 1);
+  assert.equal(result.mayHaveLateEffects, true);
+  assert.equal(clicks, 1);
+  const recovery = await engine.read("tab", { limit: 400 });
+  assert.equal(recovery.lastAction.uncertainStep, 1);
+  assert.deepEqual(recovery.lastAction.completed, [0]);
+  assert.ok(JSON.stringify(recovery).length <= 400);
+});
+
+test("already cancelled calls never acquire the browser", async () => {
+  let attached = 0;
+  const engine = new BrowserEngine({ page: async () => { attached++; throw new Error("must not acquire"); } });
+  const signal = AbortSignal.abort();
+  await assert.rejects(engine.read("tab", {}, signal), /abort/i);
+  await assert.rejects(engine.act("tab", { snapshot: "old", steps: [] }, signal), /abort/i);
+  await assert.rejects(engine.capture("tab", {}, signal), /abort/i);
+  assert.equal(attached, 0);
 });
 
 test("conversation grants accumulate, stay bounded, and survive a restart", async () => {

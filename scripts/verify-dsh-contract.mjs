@@ -21,14 +21,14 @@
  * imports still resolve against this repository's `node_modules`; `--out` moves
  * that directory.
  */
-import { mkdir, readFile, rm, stat, writeFile } from "node:fs/promises";
+import { mkdir, readFile, stat, writeFile } from "node:fs/promises";
 import path from "node:path";
 import os from "node:os";
 import { fileURLToPath, pathToFileURL } from "node:url";
 import assert from "node:assert/strict";
 import * as cordis from "@deepseek-ai/cordis";
 import { Context } from "@deepseek-ai/cordis";
-import { descriptors, hostContribution, remoteContribution } from "../src/protocol.js";
+import { PACKAGE, descriptors, hostContribution, remoteContribution } from "../src/protocol.js";
 
 const root = fileURLToPath(new URL("..", import.meta.url));
 const argument = name => {
@@ -37,6 +37,11 @@ const argument = name => {
 };
 const archive = argument("--asar");
 const output = path.resolve(root, argument("--out") ?? ".local/dsh-extract");
+const relativeRoot = path.relative(output, path.resolve(root));
+if (output === path.parse(output).root || relativeRoot === ""
+  || (!path.isAbsolute(relativeRoot) && relativeRoot !== ".." && !relativeRoot.startsWith(`..${path.sep}`))) {
+  throw new Error("--out must be a dedicated directory, not the repository root or its parent");
+}
 
 if (!archive) {
   console.error("verify-dsh-contract: pass --asar <path to app.asar>.");
@@ -86,6 +91,7 @@ async function loadClientBundle(file, stubs = {}) {
   new Function("window", await readFile(file, "utf8"))(globalThis.window);
   const entry = [...modules.entries()][0];
   assert.ok(entry, `${path.basename(file)} did not register with the module loader`);
+  if (path.resolve(file) === path.resolve(root, "lib/client.js")) assert.equal(entry[0], PACKAGE, "client loader ID must match the package");
   const external = { "@deepseek-ai/cordis": cordis, ...stubs };
   return entry[1](id => {
     if (external[id] === undefined) throw new Error(`${path.basename(file)} required unexpected module ${id}`);
@@ -145,7 +151,7 @@ async function verifyGateway(bundle) {
   assert.deepEqual(JSON.parse(JSON.stringify(calls.at(-1))),
     { channel: "/api", endpoint: "browserTabs/list", args: { request: { query: "docs" } } });
   // Negative control: the `src-json` markers this package used before 0.1.2 are refused.
-  await assert.rejects(context.remote.$mount({ package: "dsh-browser-tabs-src", descriptors: descriptors.map(descriptor => ({
+  await assert.rejects(context.remote.$mount({ package: `${PACKAGE}-src`, descriptors: descriptors.map(descriptor => ({
     ...descriptor,
     parameters: descriptor.parameters.map(parameter => ({ ...parameter, codec: { mode: "src-json" } })),
     result: { mode: "src-json" },
@@ -176,7 +182,7 @@ async function verifyBuiltClient(gatewayBundle) {
   const sources = [];
   context.provide("inputTriggers", { registerSource: source => { sources.push(source); return () => {}; } });
   gateway.apply(context);
-  const fiber = context.plugin({ name: "dsh-browser-tabs", inject: built.inject, apply: ctx => built.apply(ctx) });
+  const fiber = context.plugin({ name: PACKAGE, inject: built.inject, apply: ctx => built.apply(ctx) });
   await fiber.await();
   assert.ok(context.remote.browserTabs, "the built client must mount remote.browserTabs");
   const source = sources.find(candidate => candidate.trigger === "@");
@@ -189,7 +195,6 @@ async function verifyBuiltClient(gatewayBundle) {
   console.log("PASS: the built client mounts the namespace and its @ source lists host tabs.");
 }
 
-await rm(output, { recursive: true, force: true });
 const bundles = await extract([
   "dsh-api-gateway/lib/client.js",
   "dsh-typert-registry/lib/index.js",

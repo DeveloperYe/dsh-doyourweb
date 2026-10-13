@@ -49,11 +49,11 @@ export function apply(ctx, { browserIcon, tabIcon }) {
     if (candidate.value === "setup") {
       let service;
       try { service = namespace(); }
-      catch (error) { console.error("dsh-browser-tabs", error); return { text: "" }; }
+      catch (error) { console.error("dsh-doyourweb", error); return { text: "" }; }
       void service.setup({}).then(result => {
         if (!result.ok) throw new Error(result.error?.message || "Browser setup is unavailable");
         window.open(result.value.url, "_blank", "noopener");
-      }).catch(error => console.error("dsh-browser-tabs", error));
+      }).catch(error => console.error("dsh-doyourweb", error));
       return { text: "" };
     }
     const value = JSON.parse(candidate.value);
@@ -76,7 +76,7 @@ export function apply(ctx, { browserIcon, tabIcon }) {
       let service;
       if (!match) return false;
       try { service = namespace(); } catch { return false; }
-      void service.focus({ ref: match[0] }).catch(error => console.error("dsh-browser-tabs", error));
+      void service.focus({ ref: match[0] }).catch(error => console.error("dsh-doyourweb", error));
       return true;
     },
     codec: { clipboardText: ref => ref, serialize: async ref => ref },

@@ -1,0 +1,131 @@
+import { test } from "node:test";
+import assert from "node:assert/strict";
+import { once } from "node:events";
+import { mkdtemp, rm } from "node:fs/promises";
+import os from "node:os";
+import path from "node:path";
+import { WebSocket } from "ws";
+import { BrowserBridge } from "../src/bridge.js";
+import { Grants } from "../src/grants.js";
+import { BrowserEngine } from "../src/engine.js";
+
+async function inventory(bridge, browserSession, title = "Original") {
+  const socket = new WebSocket(`ws://127.0.0.1:${bridge.port}/extension`, ["dsh-browser", bridge.settings.token],
+    { origin: `chrome-extension://${bridge.id}` });
+  await once(socket, "open");
+  const published = once(socket, "message");
+  socket.send(JSON.stringify({ method: "dsh.inventory", params: {
+    profile: "saved-profile", browserSession, browser: "Edge",
+    tabs: [{ id: 7, title, url: "https://example.com", windowId: 1 }],
+  } }));
+  socket.send(JSON.stringify({ method: "dsh.ping" }));
+  assert.equal(JSON.parse((await published)[0]).method, "dsh.pong");
+  return { socket, ref: bridge.list()[0].ref };
+}
+
+test("grants survive DSH restart but cannot follow reused IDs after browser restart", async () => {
+  const root = await mkdtemp(path.join(os.tmpdir(), "dsh-lifetime-"));
+  const home = path.join(root, "bridge");
+  let bridge = new BrowserBridge({ home, port: 0 });
+  try {
+    await bridge.start();
+    const first = await inventory(bridge, "runtime-one");
+    const grants = new Grants({ file: path.join(home, "authorized.json") });
+    await grants.load();
+    await grants.allow("conversation", [first.ref]);
+    await bridge.close();
+    bridge = new BrowserBridge({ home, port: 0 });
+    await bridge.start();
+    const resumed = await inventory(bridge, "runtime-one");
+    assert.equal(resumed.ref, first.ref, "a live browser keeps its reference across DSH restart");
+    const reopened = new Grants({ file: path.join(home, "authorized.json") });
+    await reopened.load();
+    assert.ok(reopened.get("conversation").has(resumed.ref));
+    const restarted = await inventory(bridge, "runtime-two", "Another page");
+    assert.notEqual(restarted.ref, first.ref, "a new browser lifetime must not inherit tab grants");
+    assert.equal(reopened.get("conversation").has(restarted.ref), false);
+    assert.throws(() => bridge.resolve(first.ref), /offline|session/i);
+    assert.equal(bridge.list().length, 1);
+  } finally {
+    await bridge.close();
+    assert.equal(path.dirname(home), root);
+    await rm(root, { recursive: true, force: true });
+  }
+});
+
+test("legacy extensions without a browser lifetime never reuse old authorization", async () => {
+  const root = await mkdtemp(path.join(os.tmpdir(), "dsh-legacy-lifetime-"));
+  const home = path.join(root, "bridge");
+  const bridge = new BrowserBridge({ home, port: 0 });
+  try {
+    await bridge.start();
+    const first = await inventory(bridge);
+    const second = await inventory(bridge);
+    assert.notEqual(second.ref, first.ref);
+    assert.throws(() => bridge.resolve(first.ref), /offline|session/i);
+  } finally {
+    await bridge.close();
+    assert.equal(path.dirname(home), root);
+    await rm(root, { recursive: true, force: true });
+  }
+});
+
+test("idle release drops the debugger and cached snapshot without closing the tab", async () => {
+  const bridge = new BrowserBridge({ idleTimeoutMs: 5 });
+  const ref = "dsh-browser://runtime/7";
+  const detached = [];
+  const page = { evaluate: async () => ({ epoch: 1, url: "https://example.com" }), title: async () => "Idle",
+    locator: () => ({ ariaSnapshot: async () => '- button "Save" [ref=e1]' }) };
+  const profile = { id: "runtime", ws: { readyState: WebSocket.OPEN }, tabs: new Map([[7, { id: 7 }]]) };
+  bridge.profiles.set(profile.id, profile);
+  const relay = { ref, pathname: "/test", profile, tabId: 7, ready: Promise.resolve(page) };
+  bridge.relays.set(relay.pathname, relay);
+  bridge.request = async (_profile, method) => detached.push(method);
+  const engine = new BrowserEngine(bridge);
+  try {
+    await engine.read(ref);
+    assert.ok(engine.states.has(ref));
+    for (let index = 0; index < 100 && bridge.relays.size; index++) {
+      await new Promise(resolve => setTimeout(resolve, 10));
+    }
+    assert.equal(bridge.relays.size, 0);
+    assert.equal(engine.states.has(ref), false);
+    assert.deepEqual(detached, ["chrome.debugger.detach"]);
+    assert.equal(bridge.resolve(ref).tabId, 7, "the existing tab remains listed and resolvable");
+  } finally { engine.close?.(); await bridge.close(); }
+});
+
+test("unapproved pairing sockets close on expiry or denial without waiting for setup refresh", async () => {
+  const root = await mkdtemp(path.join(os.tmpdir(), "dsh-pairing-socket-"));
+  const home = path.join(root, "bridge");
+  const bridge = new BrowserBridge({ home, port: 0 });
+  try {
+    await bridge.start();
+    bridge.pairings.ttlMs = 50;
+    const expired = new WebSocket(`ws://127.0.0.1:${bridge.port}/extension`, ["dsh-browser"],
+      { origin: `chrome-extension://${bridge.id}` });
+    const expiring = once(expired, "close");
+    const [code, reason] = await expiring;
+    assert.equal(code, 1000);
+    assert.match(reason.toString(), /expired/i);
+    assert.equal(bridge.pairings.list().length, 0);
+    bridge.pairings.ttlMs = 5000;
+    const denied = new WebSocket(`ws://127.0.0.1:${bridge.port}/extension`, ["dsh-browser"],
+      { origin: `chrome-extension://${bridge.id}` });
+    const challenge = once(denied, "message");
+    const closing = once(denied, "close");
+    const request = JSON.parse((await challenge)[0]);
+    const response = await fetch(new URL("setup/pair", bridge.url), {
+      method: "POST", redirect: "manual", body: new URLSearchParams({
+        key: bridge.setupKey, id: request.params.id, action: "deny",
+      }),
+    });
+    assert.equal(response.status, 303);
+    assert.match((await closing)[1].toString(), /denied/i);
+    assert.equal(bridge.pairings.list().length, 0);
+  } finally {
+    await bridge.close();
+    assert.equal(path.dirname(home), root);
+    await rm(root, { recursive: true, force: true });
+  }
+});

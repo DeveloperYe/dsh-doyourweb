@@ -2,6 +2,8 @@ import { Context } from "@deepseek-ai/cordis";
 import { createServer } from "node:net";
 import assert from "node:assert/strict";
 import { apply } from "../../src/host.js";
+import { BrowserEngine } from "../../src/engine.js";
+import { BrowserBridge } from "../../src/bridge.js";
 
 async function openPort(port = 0) {
   const server = createServer();
@@ -27,7 +29,32 @@ try {
   await closePort(probe);
   const plugin = { name: "browser-tabs-test", inject: ["tools", "typert"],
     apply: ctx => apply(ctx, { home: process.argv[2], port }) };
-  if (process.argv[3] === "grants") {
+  if (process.argv[3] === "budget") {
+    const reads = [];
+    BrowserEngine.prototype.read = async (ref, options) => {
+      reads.push(options.limit);
+      return { tab: ref, content: "<".repeat(Math.floor((options.limit - 100) / 6)) };
+    };
+    const fiber = root.plugin(plugin);
+    await fiber.await();
+    const agent = { session: { id: "budget-session" } };
+    const user = { id: "budget-message", source: { kind: "user" }, content: [{ type: "text",
+      text: [1, 2, 3, 4].map(id => `@[Tab](dsh-browser://runtime/${id})`).join(" ") }] };
+    const decision = await root.waterfall("agent/pre-step", { agent },
+      () => Promise.resolve({ kind: "enter", messages: [user] }));
+    const context = decision.messages[0].content.at(-1).text;
+    assert.equal(reads.length, 4);
+    assert.ok(reads[0] < 600 && reads.every(limit => limit >= 400 && limit < 2400));
+    assert.ok(context.length <= 2400, `shared budget exceeded: ${context.length}`);
+    BrowserBridge.prototype.resolve = ref => {
+      if (ref !== "dsh-browser://runtime/1") throw new Error("Old tab is offline");
+      return { tab: { ref } };
+    };
+    const current = await tools.get("browser_read").execute({}, { agent });
+    assert.equal(current.tab, "dsh-browser://runtime/1", "old grants must not obscure the only live tab");
+    await fiber.dispose();
+    console.log("PASS: initial context shares one budget across referenced tabs, including escaping.");
+  } else if (process.argv[3] === "grants") {
     // DSH claims one input batch per step, so only the step that carries the user
     // message sees the citation; every later step must keep the grant.
     const agent = { session: { id: "test-session" } };

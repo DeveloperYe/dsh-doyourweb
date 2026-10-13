@@ -2,6 +2,7 @@ import { config } from "./config.js";
 
 let socket;
 let profile;
+let browserSession;
 let timer;
 let retryTimer;
 let ready;
@@ -52,7 +53,7 @@ async function cachedFavicon(tab) {
 
 async function inventory() {
   const connection = socket;
-  if (connection?.readyState !== WebSocket.OPEN) return;
+  if (!token || connection?.readyState !== WebSocket.OPEN) return;
   const generation = ++inventoryGeneration;
   const tabs = (await chrome.tabs.query({})).filter(supported);
   if (socket !== connection || generation !== inventoryGeneration) return;
@@ -64,11 +65,11 @@ async function inventory() {
     lastAccessed: tab.lastAccessed, incognito: false, favicon: favicons.get(faviconKey(tab))?.image,
   }));
   // Publish metadata immediately; local icon reads must not delay tab discovery.
-  send({ method: "dsh.inventory", params: { profile, browser, tabs: rows } }, connection);
+  send({ method: "dsh.inventory", params: { profile, browserSession, browser, tabs: rows } }, connection);
   const images = await Promise.all(tabs.map(cachedFavicon));
   if (socket !== connection || generation !== inventoryGeneration) return;
   if (images.some((image, index) => image !== rows[index].favicon)) {
-    send({ method: "dsh.inventory", params: { profile, browser,
+    send({ method: "dsh.inventory", params: { profile, browserSession, browser,
       tabs: rows.map((tab, index) => ({ ...tab, favicon: images[index] })) } }, connection);
   }
 }
@@ -120,6 +121,7 @@ async function command(message, connection) {
 function disconnect() {
   const connection = socket;
   socket = undefined;
+  pairing = undefined;
   clearInterval(timer);
   clearTimeout(retryTimer);
   clearTimeout(inventoryTimer);
@@ -135,11 +137,11 @@ function disconnect() {
 }
 
 async function updateStatus() {
-  const connected = socket?.readyState === WebSocket.OPEN && !pairing;
+  const connected = !!token && socket?.readyState === WebSocket.OPEN && !pairing;
   const title = stopped ? "\u5df2\u6682\u505c"
     : pairing ? `\u914d\u5bf9\u4e2d \u00b7 ${pairing.code}`
       : !token ? "\u672a\u914d\u5bf9" : connected ? "\u5df2\u8fde\u63a5" : "\u7b49\u5f85 DSH";
-  await chrome.action.setTitle({ title: `DSH Browser Tabs - ${title}` });
+  await chrome.action.setTitle({ title: `DSH DoYourWeb - ${title}` });
   // While unpaired the badge is the code the user compares with the DSH setup page.
   await chrome.action.setBadgeText({ text: pairing ? pairing.code : connected || stopped ? "" : "OFF" });
   await chrome.action.setBadgeBackgroundColor({ color: pairing ? "#b45309" : "#6b7280" });
@@ -159,7 +161,7 @@ async function connect() {
     retry = 1000;
     pairing = undefined;
     void updateStatus();
-    void inventory().catch(console.warn);
+    if (token) void inventory().catch(console.warn);
     timer = setInterval(() => send({ method: "dsh.ping" }, connection), 20000);
   };
   connection.onmessage = async event => {
@@ -202,9 +204,9 @@ chrome.debugger.onEvent.addListener((source, method, params) => {
   if (attached.has(source.tabId)) send({ method: "chrome.debugger.onEvent", params: [source, method, params] });
 });
 chrome.debugger.onDetach.addListener((source, reason) => {
-  attached.delete(source.tabId);
+  const controlled = attached.delete(source.tabId);
   void chrome.action.setBadgeText({ tabId: source.tabId, text: "" }).catch(() => {});
-  send({ method: "chrome.debugger.onDetach", params: [source, reason] });
+  if (controlled) send({ method: "chrome.debugger.onDetach", params: [source, reason] });
 });
 chrome.tabs.onUpdated.addListener(scheduleInventory);
 chrome.tabs.onCreated.addListener(scheduleInventory);
@@ -219,7 +221,7 @@ chrome.runtime.onMessage.addListener((message, _sender, respond) => {
   void (async () => {
     await ready;
     if (message.type === "status") {
-      respond({ connected: socket?.readyState === WebSocket.OPEN && !pairing,
+      respond({ connected: !!token && socket?.readyState === WebSocket.OPEN && !pairing,
         availableTabs, controlledTabs: attached.size, stopped, paired: !!token,
         pairing: pairing === undefined ? undefined : { code: pairing.code, expiresAt: pairing.expiresAt },
         port });
@@ -258,6 +260,10 @@ chrome.runtime.onMessage.addListener((message, _sender, respond) => {
 ready = (async () => {
   const stored = await chrome.storage.local.get(["profile", "stopped", "token", "port"]);
   profile = stored.profile || crypto.randomUUID();
+  // Session storage survives worker suspension, but never a full browser restart.
+  const session = await chrome.storage.session.get(["browserSession"]);
+  browserSession = session.browserSession || crypto.randomUUID();
+  await chrome.storage.session.set({ browserSession });
   stopped = stored.stopped === true;
   token = stored.token || config.token || "";
   port = stored.port || config.port || 43187;

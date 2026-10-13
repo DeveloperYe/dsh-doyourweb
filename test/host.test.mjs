@@ -26,3 +26,5 @@ test("DSH unload releases the bridge port before the plugin is enabled again", (
 test("a failed DSH activation releases the bridge before retry", () => lifecycle("failed-activation"));
 test("a tab cited by the user stays authorized across steps and restarts",
   () => lifecycle("grants", /PASS: a cited tab stays authorized/));
+test("multi-tab initial context shares one serialized output budget",
+  () => lifecycle("budget", /PASS: initial context shares/));

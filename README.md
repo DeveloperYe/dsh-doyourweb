@@ -1,4 +1,4 @@
-# DSH Browser Tabs
+# dsh-doyourweb
 
 [English](README.md) | [Simplified Chinese](README.zh-CN.md)
 
@@ -9,15 +9,25 @@ Edge tabs, without opening a separate browser or exporting login cookies.
 
 Prototype targeting the plugin APIs shipped with DSH `0.2.0-rc.2`.
 
+- Release `ver0.1.0` renames the package from `dsh-browser-tabs` to `dsh-doyourweb`.
+  Pairing, port, reference scheme and the `browser-tabs/` data directory are preserved.
+  Re-select previously cited tabs once after upgrading: references now identify a
+  browser lifetime, not a persistent profile plus a potentially reused numeric tab ID.
+- Cancellation reaches Playwright, invalidates the old snapshot and preserves a
+  completed-action receipt. Frame references, pairing expiration and safe contract
+  extraction are fixed. Batches support `wait`, bounded `extract` and `observe: "summary"`.
+- Initial multi-tab context shares one output budget; titles, URLs and JSON escaping
+  count towards read limits. Idle debugger connections and full snapshots are released.
+
 - Host and client modules build successfully.
 - Unit tests and an isolated, headless Chromium extension integration test pass.
 - The Remote contribution is mounted and invoked against the real DSH client
   Gateway and Typert registry bundles, so `@` and `/` reach the host service.
-- Version `0.1.3` pairs by code instead of by generated files: the shipped
+- Legacy `dsh-browser-tabs 0.1.3` introduced code pairing instead of generated files: the shipped
   `extension` folder is loaded as-is (it pins its own id), the extension shows a
   4-digit code on its toolbar badge, and the DSH setup page approves the request
   carrying the same code. The token then lives in the extension's browser storage.
-- Version `0.1.2` fixed four defects. Three made both menus report
+- Legacy `dsh-browser-tabs 0.1.2` fixed four defects. Three made both menus report
   `服务不可用: Cannot read properties of undefined (reading 'list')`:
   - the Remote descriptors declared `src-json` codecs, which the client Gateway
     refuses, so `remote.browserTabs` was never mounted;
@@ -45,8 +55,9 @@ Prototype targeting the plugin APIs shipped with DSH `0.2.0-rc.2`.
 - One-click code pairing: load the shipped extension once, compare a 4-digit code, done.
 - An offline connection entry instead of silently hiding the browser candidates.
 - Automatic background connection and reconnection, without opening the popup.
-- Compact accessibility snapshots with element references and explicit pagination.
-- Batched browser actions through Playwright, with a maximum of 12 steps per call.
+- Compact accessibility snapshots with element references, including iframe refs, and explicit pagination.
+- Batched Playwright actions, condition waits and structured extraction, up to 12 steps per call.
+- Optional summary-only action output and automatic idle debugger release.
 - Local PNG screenshots on demand.
 - Conversation-scoped tab selection; stale snapshots are rejected before acting.
 
@@ -67,10 +78,11 @@ npm run build
 ```
 
 In DSH, open **Plugins > Add Plugin** and point it at this built project directory,
-wherever you cloned it (for example `~/code/dsh-browser-tabs`).
+wherever you cloned it (for example `~/code/dsh-doyourweb`).
 
 The package declares `dsh.bundle` and includes `cordis.patch.yml`, which contributes
-the `browser-tabs` plugin configuration. Do not install an unbuilt source checkout:
+the `dsh-doyourweb` plugin configuration (the `browser-tabs` instance ID is retained
+for migration). Do not install an unbuilt source checkout:
 the runtime entry points are `lib/host.js` and `lib/client.js`.
 
 To create a distributable package containing the compiled modules:
@@ -79,12 +91,12 @@ To create a distributable package containing the compiled modules:
 npm pack
 ```
 
-`prepack` runs the build automatically. The resulting `dsh-browser-tabs-0.1.3.tgz`
+`prepack` runs the build automatically. The resulting `dsh-doyourweb-0.1.0.tgz`
 contains the runtime modules, extension templates, bundle configuration, and docs.
 It can be installed with DSH's CLI:
 
 ```sh
-dsh plugin --profile desktop add ./dsh-browser-tabs-0.1.3.tgz
+dsh plugin --profile desktop add ./dsh-doyourweb-0.1.0.tgz
 ```
 
 For directory-based UI installation from a distribution, extract the archive and
@@ -140,28 +152,45 @@ and review; it is separate from installation through DSH's plugin manager.
 
 The default setup page is `http://127.0.0.1:43187/setup` while the plugin is running.
 
-### Updating From 0.1.2 Or Earlier
+### Updating From Legacy dsh-browser-tabs 0.1.2 Or Earlier
 
-Versions before `0.1.3` generated a per-install copy of the extension with the
+Legacy `dsh-browser-tabs` versions before `0.1.3` generated a per-install copy of the extension with the
 token baked into `config.js`, and that copy was the folder you loaded. The bridge
 still accepts such a copy with the old token, so an existing install keeps working;
 to move to code pairing, load this package's `extension` folder instead, approve
 the request it raises, and remove the generated copy from the browser's extension
 manager. Delete the leftover `browser-tabs/extension` directory afterwards — the
-bridge no longer reads or writes it.
+bridge no longer reads or writes it. Legacy extensions still connect, but need a
+fresh tab selection after every reconnect because they lack a browser-lifetime ID.
+
+### Updating To dsh-doyourweb
+
+Disable and remove the old `dsh-browser-tabs` DSH plugin before installing this
+package; do not run both on port `43187`. Keep the `browser-tabs/` data directory:
+the new package reads its existing token, grants and screenshots. The GitHub
+repository URL remains the existing one until the repository itself is renamed.
+
+The companion extension keeps its pinned public key and extension ID. If its
+folder has not moved, reload it. If DSH installed the package at a different path,
+load the new package's `extension` folder without first removing the existing
+extension or clearing its storage. Refresh DSH after installing the new package.
+Select the required tabs with `@` once to replace old profile-based references.
+DSH or service-worker restarts then preserve references to live tabs. A full
+browser restart creates new references and requires another tab selection; pairing
+and website login state remain intact.
 
 Restart DSH (or disable and re-enable the plugin) after updating so the rebuilt
 host and client modules are loaded, then refresh the DSH page in the browser.
 
 ### Port Already In Use
 
-Version `0.1.0` had an unload cleanup bug: disabling or removing the plugin could
-leave its bridge listening on port `43187`. Version `0.1.1` uses Cordis-owned
+Legacy `dsh-browser-tabs 0.1.0` had an unload cleanup bug: disabling or removing the plugin could
+leave its bridge listening on port `43187`. Legacy `0.1.1` uses Cordis-owned
 resource cleanup, including failed activation, so subsequent unloads release it.
 Activation now fails with an explicit message naming the port instead of a bare
 `EADDRINUSE`, and the extension popup lets you point a browser at another port.
 
-For the first update from `0.1.0`, save any ongoing work and fully quit DSH,
+For the first update from legacy `dsh-browser-tabs 0.1.0`, save any ongoing work and fully quit DSH,
 including its background/tray process, then start it again. Closing the window or
 reinstalling the plugin alone cannot release a listener leaked by the old code.
 Install or enable the updated plugin from the same project directory. Browser
@@ -180,7 +209,8 @@ Defaults are contributed by `cordis.patch.yml`; the host also accepts an optiona
 | Setting | Default | Meaning |
 | --- | --- | --- |
 | `port` | `43187` | Local bridge port, bound to `127.0.0.1` only. |
-| `snapshotChars` | `2400` | Default character budget for a snapshot response. |
+| `snapshotChars` | `2400` | Serialized character budget for reads and the whole initial multi-tab context (400-8000). |
+| `idleTimeoutMs` | `120000` | Release the debugger and full snapshot after this many idle milliseconds; no tab is closed. |
 | `home` | `DSH_HOME` or `~/.dsh` | Base directory; plugin data is stored under `browser-tabs/`. |
 
 Plugin data under `browser-tabs/` is `pairing.json` (the connection token — never
@@ -188,7 +218,7 @@ commit or share it), `authorized.json` (the tab references each conversation cit
 with `@`; identifiers only, no page content), and `captures/` (requested
 screenshots). Deleting `pairing.json` rotates the token, which means the extension
 must be unpaired and paired again; deleting `authorized.json` only means previously
-cited tabs must be selected with `@` again. Version `0.1.3` keeps nothing else:
+cited tabs must be selected with `@` again. The current version keeps nothing else:
 there is no generated extension folder any more.
 
 If the plugin's `port` setting is changed, set the same port in the extension popup
@@ -199,21 +229,55 @@ If the plugin's `port` setting is changed, set the same port in the extension po
 | Tool | Purpose |
 | --- | --- |
 | `browser_read` | Read a compact snapshot; narrow with `selector` or `query`, or continue with `cursor`. |
-| `browser_act` | Use the latest snapshot ID to click, fill, press, select, check, hover, scroll, or navigate. |
+| `browser_act` | Use the latest snapshot ID for actions, condition waits and bounded extraction. `observe: "summary"` skips the next snapshot. |
 | `browser_capture` | Save a screenshot and return its local path; no base64 is placed in text output. |
 
-Actions can use snapshot element references such as `e1` or Playwright selectors.
+Actions can use snapshot element references such as `e1` / `f2e7` or Playwright selectors.
 A batch stops at the first failure or navigation and reports completed steps.
 Read the current state before continuing; do not replay completed actions.
+Cancellation invalidates the old snapshot even after a partial batch. The next
+read exposes `lastAction`; `uncertainStep` / `mayHaveLateEffects` means an in-flight
+effect could still have occurred. Inspect the page instead of replaying that step.
+
+For a finish-and-read workflow, use a single `browser_act` call:
+
+```json
+{
+  "snapshot": "<latest snapshot ID>",
+  "observe": "summary",
+  "steps": [
+    { "op": "fill", "ref": "e2", "value": "example" },
+    { "op": "click", "ref": "e3" },
+    { "op": "wait", "selector": "#result", "state": "visible", "timeout": 2000 },
+    { "op": "extract", "selector": "#result a", "fields": ["text", "href"], "maxRows": 10 }
+  ]
+}
+```
+
+`wait` supports visible, hidden, attached or detached states, with an 8000 ms
+maximum. `extract` reads only text, value or href, at most 20 rows and 200 characters
+per field, further reduced to fit the shared action budget. Password input values
+are excluded. Results expose `omittedRows` and `truncated`; this is not an arbitrary
+JavaScript executor. Summary mode has no new snapshot ID, so read again before
+starting another batch. Navigation still ends the batch immediately.
 
 ## Efficiency And Privacy
 
 Tab discovery returns metadata to the UI rather than sending every open page to
 the model. Cached favicon images also stay in the UI, not the model context. When
 a direct user message references a tab, the plugin prepares a
-bounded initial snapshot and caches that context for the message. Full snapshot
-text remains local; omitted content can be retrieved with a cursor. Read limits
-are 400 to 8000 characters, with accessibility depth 8 by default.
+bounded initial snapshot and caches that context for the message. Up to four tabs
+share `snapshotChars` (2400 by default), including the context wrapper and metadata;
+additional pages are indicated by `omittedTabs` and can be read explicitly. Read
+limits of 400-8000 count the complete JSON-escaped response, not just body text.
+Oversized title/URL metadata is marked with `metadataTruncated`; body pagination
+remains lossless. Action output is capped at 1600 characters, preserving receipts
+before page text. These are character budgets, not measured model token counts.
+
+Full snapshot text remains local until connection release; cursors retrieve
+omitted content while that snapshot remains valid. Output budgeting does not bound
+full DOM extraction time: use selector/query and a suitable depth (default 8) to
+reduce page traversal. Summary mode skips post-action snapshot traversal entirely.
 
 The bridge binds `127.0.0.1` only, accepts the WebSocket origin of the pinned
 extension id, and requires a per-install token. Because any local process can forge
@@ -221,7 +285,8 @@ an origin, the first connection is instead confirmed by the person at the keyboa
 the extension displays a 4-digit code on its badge and the DSH setup page approves
 the request carrying the same code, so a local impostor cannot collect the token.
 The bridge attaches the debugger to referenced tabs on demand and releases it when
-the connection stops. Incognito tabs and browser-internal pages are excluded.
+the connection stops or becomes idle. The next read reconnects; an idle snapshot's
+cursor is no longer valid. Incognito tabs and browser-internal pages are excluded.
 Opening DevTools or another debugger may interrupt control.
 
 Page data returned by these tools enters the configured DSH model's context.
@@ -252,10 +317,12 @@ npm run test:browser
 
 The integration test uses a disposable profile, a local fixture page, and bridge
 port `43188`. It checks extension inventory, authenticated CDP transport, compact
-references, batched filling and clicking, iframe access, stale navigation,
-screenshots, and release without closing the controlled tab. It also checks local
+references, batched filling/clicking/waiting/extraction, summary output, iframe
+actions through the engine, stale navigation, in-flight cancellation, screenshots,
+and idle release/reconnect without closing the controlled tab. It also checks local
 favicon images, background connection when DSH starts later, and reconnection
-after DSH/browser restarts without opening the popup. It does not interact with
+after DSH/browser restarts without opening the popup, including authorization
+invalidation after a full browser restart. It does not interact with
 the user's normal browser profile or prove the native DSH menu UI works.
 
 Unit tests pin the DSH contracts and the pairing rules: the Remote descriptors must
@@ -281,7 +348,9 @@ It extracts the relevant bundles into `.local/dsh-extract` (Git-ignored), then
 asserts that the real registry accepts this package's host contribution, that the
 real Gateway mounts and invokes its client contribution, and that the built
 `lib/client.js` lists host tabs through its `@` source. The script needs `npm ci`
-first so the extracted bundles can resolve Cordis.
+first so the extracted bundles can resolve Cordis. `--out` must name a dedicated
+directory; the script overwrites only its two extracted bundles and never recursively
+deletes the output directory.
 
 Host lifecycle tests use the same Cordis `4.0.4` version as DSH `0.2.0-rc.2`, in
 disposable child processes. They verify repeated enable/disable and cleanup after

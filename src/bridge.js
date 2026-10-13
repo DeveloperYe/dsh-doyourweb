@@ -1,4 +1,5 @@
 import http from "node:http";
+import { EventEmitter } from "node:events";
 import { randomUUID, randomBytes, timingSafeEqual } from "node:crypto";
 import { readFile, writeFile, mkdir } from "node:fs/promises";
 import path from "node:path";
@@ -20,14 +21,17 @@ function escapeHtml(value) {
   return String(value).replace(/[&<>"']/g, c => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[c]));
 }
 
-export class BrowserBridge {
-  constructor({ home, port = 43187, extensionSource } = {}) {
+export class BrowserBridge extends EventEmitter {
+  constructor({ home, port = 43187, extensionSource, idleTimeoutMs = 120000 } = {}) {
+    super();
     this.home = home;
     this.port = port;
     this.extensionSource = extensionSource || path.resolve(path.dirname(fileURLToPath(import.meta.url)), "../extension");
     this.profiles = new Map();
     this.relays = new Map();
     this.pending = new Map();
+    this.detachments = new Map();
+    this.idleTimeoutMs = idleTimeoutMs;
     this.pairings = new Pairings();
     this.setupKey = randomBytes(16).toString("hex");
     this.sequence = 0;
@@ -111,7 +115,12 @@ export class BrowserBridge {
     const pairing = this.pairings.request(ws);
     if (pairing === undefined) return ws.close(1008, "Too many pairing requests");
     ws.on("error", () => {});
-    ws.on("close", () => this.pairings.drop(ws));
+    const expiry = setTimeout(() => {
+      this.pairings.drop(ws);
+      ws.close(1000, "Pairing expired");
+    }, this.pairings.ttlMs);
+    expiry.unref();
+    ws.on("close", () => { clearTimeout(expiry); this.pairings.drop(ws); });
     ws.send(JSON.stringify({ method: "dsh.pairing", params: {
       id: pairing.id, code: pairing.code, expiresAt: pairing.expires, port: this.port,
     } }));
@@ -141,7 +150,7 @@ export class BrowserBridge {
       <button name="action" value="deny">&#25298;&#32477;</button></form></li>`).join("");
     const copy = (label, value) => `<button type="button" class="copy" data-copy="${escapeHtml(value)}">${label}</button>`;
     const body = `
-      <h1>DSH Browser Tabs</h1>
+      <h1>DSH DoYourWeb</h1>
       <p class="status">${this.profiles.size ? "&#24050;&#36830;&#25509;&#27983;&#35272;&#22120;" : "&#31561;&#24453;&#27983;&#35272;&#22120;&#25193;&#23637;&#36830;&#25509;"}</p>
       <ol>
         <li>&#22312; Edge &#25110; Chrome &#30340;&#25193;&#23637;&#31649;&#29702;&#39029;&#25171;&#24320;&#24320;&#21457;&#32773;&#27169;&#24335;&#65292;&#36873;&#25321;&#8220;&#21152;&#36733;&#35299;&#21387;&#30340;&#25193;&#23637;&#8221;&#65306;${copy("\u590d\u5236\u6269\u5c55\u76ee\u5f55\u8def\u5f84", this.extensionPath)}&#65288;&#31896;&#21040;&#25991;&#20214;&#36873;&#25321;&#26694;&#65292;macOS &#25353; &#8679;&#8984;G&#65289;</li>
@@ -171,7 +180,7 @@ export class BrowserBridge {
       });`;
     // Poll only while nothing is pending: a reload would fight the approve buttons.
     const refresh = pending.length ? "" : `<meta http-equiv="refresh" content="3">`;
-    return `<!doctype html><html lang="zh-CN"><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">${refresh}<title>DSH Browser Tabs</title><style>body{margin:40px auto;padding:0 20px;max-width:760px;font:15px/1.8 system-ui;color:#252525;background:#fff}h1{font-size:24px}code,.code{background:#f5f5f5;padding:2px 6px;border-radius:4px;font-family:ui-monospace,monospace}details code{display:inline-block;padding:8px;overflow-wrap:anywhere;margin-top:6px}li{margin:12px 0}.status{color:#237841}.hint{color:#6b7280;font-size:13px}a{color:#1766bf}form{display:inline}button{margin:2px 4px;padding:4px 12px;cursor:pointer}</style><body>${body}<script nonce="${nonce}">${script}</script></body></html>`;
+    return `<!doctype html><html lang="zh-CN"><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">${refresh}<title>DSH DoYourWeb</title><style>body{margin:40px auto;padding:0 20px;max-width:760px;font:15px/1.8 system-ui;color:#252525;background:#fff}h1{font-size:24px}code,.code{background:#f5f5f5;padding:2px 6px;border-radius:4px;font-family:ui-monospace,monospace}details code{display:inline-block;padding:8px;overflow-wrap:anywhere;margin-top:6px}li{margin:12px 0}.status{color:#237841}.hint{color:#6b7280;font-size:13px}a{color:#1766bf}form{display:inline}button{margin:2px 4px;padding:4px 12px;cursor:pointer}</style><body>${body}<script nonce="${nonce}">${script}</script></body></html>`;
   }
 
   handlePairPost(request, response) {
@@ -186,7 +195,7 @@ export class BrowserBridge {
       if (!sameSecret(fields.get("key"), this.setupKey)) { response.writeHead(403).end(); return; }
       const id = fields.get("id") ?? "";
       if (fields.get("action") === "allow") this.approvePairing(id);
-      else this.pairings.take(id);
+      else this.pairings.take(id)?.socket.close(1000, "Pairing denied");
       response.writeHead(303, { Location: "/setup", "Cache-Control": "no-store" }).end();
     });
   }
@@ -199,11 +208,28 @@ export class BrowserBridge {
         const data = JSON.parse(raw.toString());
         if (data.method === "dsh.inventory") {
           const info = data.params;
-          if (!/^[a-z0-9-]{1,80}$/i.test(info.profile) || !Array.isArray(info.tabs)) throw new Error("Invalid inventory");
-          if (profile && info.profile !== profile.id) throw new Error("Profile identity changed");
+          if (!/^[a-z0-9-]{1,80}$/i.test(info.profile) || !Array.isArray(info.tabs)
+            || (info.browserSession !== undefined && !/^[a-z0-9-]{1,80}$/i.test(info.browserSession))) {
+            throw new Error("Invalid inventory");
+          }
+          if (profile && (info.profile !== profile.sourceId || info.browserSession !== profile.sessionId)) {
+            throw new Error("Profile identity changed");
+          }
           if (!profile) {
-            this.profiles.get(info.profile)?.ws.close(1000, "Reconnected");
-            profile = { id: info.profile, ws, tabs: new Map(), browser: info.browser === "Edge" ? "Edge" : "Chrome" };
+            // A persisted profile does not identify a browser lifetime: Chrome can
+            // reuse tab IDs after restart. Legacy clients get a connection-only ID.
+            const id = info.browserSession ?? randomUUID();
+            if (this.profiles.has(id) && this.profiles.get(id).sourceId !== info.profile) {
+              throw new Error("Browser session identity collision");
+            }
+            for (const old of this.profiles.values()) {
+              if (old.sourceId === info.profile) {
+                this.profiles.delete(old.id);
+                old.ws.close(1000, "Reconnected");
+              }
+            }
+            profile = { id, sourceId: info.profile, sessionId: info.browserSession,
+              ws, tabs: new Map(), browser: info.browser === "Edge" ? "Edge" : "Chrome" };
             this.profiles.set(profile.id, profile);
           }
           profile.tabs = new Map(info.tabs.filter(tab => Number.isSafeInteger(tab.id) && !tab.incognito && canControl(tab.url))
@@ -211,6 +237,9 @@ export class BrowserBridge {
               favicon: typeof tab.favicon === "string" && tab.favicon.length <= 12000
                 && /^data:image\/png;base64,[a-zA-Z0-9+/=]+$/.test(tab.favicon) ? tab.favicon : undefined,
             }]));
+          for (const relay of [...this.relays.values()]) {
+            if (relay.profile === profile && !profile.tabs.has(relay.tabId)) void this.dropRelay(relay);
+          }
         } else if (data.id && this.pending.has(data.id)) {
           const pending = this.pending.get(data.id);
           if (pending.ws !== ws) throw new Error("Wrong connection for response");
@@ -257,20 +286,21 @@ export class BrowserBridge {
   resolve(ref) {
     const { profile: id, tabId } = parseRef(ref);
     const profile = this.profiles.get(id);
-    if (!profile) throw new Error("Browser extension is offline. Open /browser in DSH to connect it.");
+    if (!profile) throw new Error("Browser extension is offline or its browser session ended. Open /browser to connect, then select the tab with @ again.");
     const tab = profile.tabs.get(tabId);
     if (!tab) throw new Error("Referenced browser tab is closed or unsupported. Select a tab with @ again.");
     return { profile, tab, tabId };
   }
 
   async page(ref) {
+    await this.detachments.get(ref);
     const { profile, tab, tabId } = this.resolve(ref);
     const existing = [...this.relays.values()].find(relay => relay.profile === profile && relay.tabId === tabId);
-    if (existing) return existing.ready;
+    if (existing) { clearTimeout(existing.idleTimer); return existing.ready; }
     const pathname = `/cdp/${randomUUID()}`;
     const model = new BrowserModel((method, params) => this.request(profile, method, params));
     model.onTabCreated(tab);
-    const relay = { pathname, profile, tabId, model };
+    const relay = { pathname, ref, profile, tabId, model };
     this.relays.set(pathname, relay);
     relay.ready = chromium.connectOverCDP(`ws://127.0.0.1:${this.port}${pathname}`, {
       headers: { Authorization: `Bearer ${this.settings.token}` }, timeout: 15000,
@@ -307,12 +337,26 @@ export class BrowserBridge {
   }
 
   dropRelay(relay) {
-    if (!this.relays.delete(relay.pathname)) return;
+    if (!this.relays.delete(relay.pathname)) return this.detachments.get(relay.ref);
+    clearTimeout(relay.idleTimer);
+    this.emit("release", relay.ref);
     relay.ws?.close();
-    relay.browser?.close().catch(() => {});
-    if (relay.profile.ws.readyState === WebSocket.OPEN) {
-      void this.request(relay.profile, "chrome.debugger.detach", [{ tabId: relay.tabId }]).catch(() => {});
-    }
+    const closing = relay.browser?.close().catch(() => {});
+    const detached = relay.profile.ws.readyState === WebSocket.OPEN
+      ? this.request(relay.profile, "chrome.debugger.detach", [{ tabId: relay.tabId }]).catch(() => {}) : undefined;
+    const cleanup = Promise.all([closing, detached]).finally(() => {
+      if (this.detachments.get(relay.ref) === cleanup) this.detachments.delete(relay.ref);
+    });
+    this.detachments.set(relay.ref, cleanup);
+    return cleanup;
+  }
+
+  release(ref) {
+    const relay = [...this.relays.values()].find(relay => relay.ref === ref);
+    if (!relay) return;
+    clearTimeout(relay.idleTimer);
+    relay.idleTimer = setTimeout(() => void this.dropRelay(relay), this.idleTimeoutMs);
+    relay.idleTimer.unref();
   }
 
   async focus(ref) {
@@ -322,6 +366,7 @@ export class BrowserBridge {
 
   async close() {
     for (const relay of [...this.relays.values()]) this.dropRelay(relay);
+    await Promise.all(this.detachments.values());
     for (const client of this.ws?.clients || []) client.close();
     for (const pending of this.pending.values()) { clearTimeout(pending.timer); pending.reject(new Error("Bridge stopped")); }
     this.pending.clear();

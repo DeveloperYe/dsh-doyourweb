@@ -1,5 +1,7 @@
+import { clip } from "./output.js";
+
 export const SCHEME = "dsh-browser://";
-export const PACKAGE = "dsh-browser-tabs";
+export const PACKAGE = "dsh-doyourweb";
 
 export function tabRef(profile, tabId) {
   if (!/^[a-z0-9-]{1,80}$/i.test(profile) || !Number.isSafeInteger(tabId) || tabId < 0) {
@@ -19,7 +21,7 @@ export function mentions(text) {
 }
 
 export function formatMention(tab) {
-  const title = String(tab.title || "Browser tab").replace(/[\[\]\\\r\n]/g, " ");
+  const title = clip(String(tab.title || "Browser tab").replace(/[\[\]\\\r\n]/g, " "), 128);
   return `@[${title}](${tab.ref})`;
 }
 

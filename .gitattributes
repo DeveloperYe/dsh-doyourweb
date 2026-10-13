@@ -1,0 +1,9 @@
+# Keep one canonical line ending in the repository and on every platform.
+* text=auto eol=lf
+
+# Images and archives are never line-ending converted.
+*.png binary
+*.jpg binary
+*.webp binary
+*.ico binary
+*.tgz binary

@@ -1,0 +1,204 @@
+import { test } from "node:test";
+import assert from "node:assert/strict";
+import vm from "node:vm";
+import { build } from "esbuild";
+
+/** The shipped template: no token, so the extension asks DSH to pair. */
+const pairingBundle = await build({ entryPoints: ["extension/background.js"], bundle: true,
+  write: false, platform: "browser", format: "iife", plugins: [{ name: "test-unpaired",
+    setup(build) {
+      build.onLoad({ filter: /[/\\]config\.js$/ }, () => ({
+        contents: 'export const config = { port: 43188, token: "" };', loader: "js",
+      }));
+    },
+  }] });
+/** A token baked in by hand, which shipped configs before 0.1.3 carried. */
+const bundle = await build({ entryPoints: ["extension/background.js"], bundle: true,
+  write: false, platform: "browser", format: "iife", plugins: [{ name: "test-paired",
+    setup(build) {
+      build.onLoad({ filter: /[/\\]config\.js$/ }, () => ({
+        contents: 'export const config = { port: 43188, token: "test-token" };', loader: "js",
+      }));
+    },
+  }] });
+
+function event() {
+  const listeners = [];
+  return { listeners, addListener: fn => listeners.push(fn),
+    fire: (...args) => listeners.map(fn => fn(...args)) };
+}
+
+const flush = () => new Promise(resolve => setImmediate(resolve));
+
+function worker(stored = {}, tabs = [], code = bundle.outputFiles[0].text) {
+  let load;
+  const sockets = [], timers = new Map(), detached = [], fetched = [], badges = [];
+  let sequence = 0;
+  class Socket {
+    static OPEN = 1;
+    static CONNECTING = 0;
+    constructor(url, protocols) { this.url = url; this.protocols = protocols; this.readyState = 0; this.messages = []; sockets.push(this); }
+    open() { this.readyState = 1; this.onopen?.(); }
+    send(value) { this.messages.push(JSON.parse(value)); }
+    close() { this.readyState = 3; return this.onclose?.(); }
+  }
+  const noop = async () => {};
+  const chrome = {
+    tabs: { query: async () => tabs, get: async id => tabs.find(tab => tab.id === id),
+      onUpdated: event(), onCreated: event(), onRemoved: event(), onActivated: event() },
+    debugger: { onEvent: event(), onDetach: event(), attach: noop, detach: async target => detached.push(target.tabId) },
+    action: { setBadgeText: async options => badges.push(options.text), setBadgeBackgroundColor: noop, setTitle: noop },
+    runtime: { onStartup: event(), onInstalled: event(), onMessage: event(), getURL: path => `chrome-extension://test/${path}` },
+    alarms: { onAlarm: event(), create: noop },
+    storage: { local: { get: () => new Promise(resolve => { load = resolve; }),
+      set: async values => Object.assign(stored, values),
+      remove: async keys => { for (const key of [].concat(keys)) delete stored[key]; } } },
+  };
+  vm.runInNewContext(code, { chrome, WebSocket: Socket,
+    navigator: { userAgent: "Edg/156" }, crypto: { randomUUID: () => "test-profile" },
+    setTimeout: (fn, delay) => { const id = ++sequence; timers.set(id, { fn, delay }); return id; },
+    setInterval: (fn, delay) => { const id = ++sequence; timers.set(id, { fn, delay, interval: true }); return id; },
+    clearTimeout: id => timers.delete(id), clearInterval: id => timers.delete(id), console, URL, AbortSignal,
+    btoa, fetch: async url => {
+      fetched.push(String(url));
+      return new Response(Buffer.from("89504e470d0a1a0a", "hex"));
+    },
+  });
+  return { chrome, sockets, timers, detached, fetched, badges, stored, initialize: () => load(stored) };
+}
+
+test("browser startup and alarms wait for saved settings without opening the popup", async () => {
+  const running = worker({ profile: "saved-profile" });
+  assert.equal(running.chrome.runtime.onStartup.listeners.length, 1);
+  assert.equal(running.chrome.runtime.onInstalled.listeners.length, 1);
+  running.chrome.runtime.onStartup.fire();
+  running.chrome.alarms.onAlarm.fire({ name: "reconnect" });
+  await flush();
+  assert.equal(running.sockets.length, 0, "Connection must not race storage initialization");
+  running.initialize();
+  await flush();
+  assert.equal(running.sockets.length, 1, "Startup must connect exactly once without a popup");
+  running.sockets[0].open();
+  await flush();
+  const inventory = running.sockets[0].messages.find(message => message.method === "dsh.inventory");
+  assert.equal(inventory.params.profile, "saved-profile");
+  assert.ok([...running.timers.values()].some(timer => timer.interval && timer.delay === 20000));
+});
+
+test("a saved pause survives startup and reconnect alarms", async () => {
+  const paused = worker({ stopped: true });
+  paused.chrome.alarms.onAlarm.fire({ name: "reconnect" });
+  await flush();
+  assert.equal(paused.sockets.length, 0);
+  paused.initialize();
+  await flush();
+  paused.chrome.runtime.onStartup.fire();
+  await flush();
+  assert.equal(paused.sockets.length, 0);
+});
+
+test("tab icons come from the browser cache without fetching websites", async () => {
+  const running = worker({}, [{ id: 1, url: "https://example.com/", title: "Example",
+    favIconUrl: "https://example.com/favicon.ico" }]);
+  running.initialize();
+  await flush();
+  running.sockets[0].open();
+  await flush();
+  const inventory = running.sockets[0].messages.filter(message => message.method === "dsh.inventory").at(-1);
+  assert.match(inventory.params.tabs[0].favicon, /^data:image\/png;base64,/);
+  assert.equal(running.fetched.length, 1);
+  assert.match(running.fetched[0], /^chrome-extension:\/\/test\/_favicon\//);
+  running.chrome.tabs.onUpdated.fire();
+  const timer = [...running.timers.values()].find(timer => timer.delay === 150);
+  timer.fn();
+  await flush();
+  assert.equal(running.fetched.length, 1, "Repeated inventory must reuse the cached icon");
+});
+
+test("disconnect releases control and reconnects without popup; pause remains respected", async () => {
+  const running = worker({ token: "paired-token" }, [{ id: 7, url: "https://example.com/" }]);
+  running.initialize();
+  await flush();
+  const connection = running.sockets[0];
+  assert.deepEqual([...connection.protocols], ["dsh-browser", "paired-token"]);
+  connection.open();
+  await connection.onmessage({ data: JSON.stringify({ id: 1, method: "chrome.debugger.attach", params: [{ tabId: 7 }] }) });
+  await connection.close();
+  assert.deepEqual(running.detached, [7]);
+  const retry = [...running.timers.values()].find(timer => !timer.interval && timer.delay === 1000);
+  assert.ok(retry, "Connection loss must schedule an automatic retry");
+  retry.fn();
+  await flush();
+  assert.equal(running.sockets.length, 2);
+  running.sockets[1].open();
+  assert.equal([...running.timers.values()].filter(timer => timer.interval).length, 1);
+  const listener = running.chrome.runtime.onMessage.listeners[0];
+  await new Promise(resolve => { assert.equal(listener({ type: "toggle", stopped: true }, {}, resolve), true); });
+  running.chrome.alarms.onAlarm.fire({ name: "reconnect" });
+  await flush();
+  assert.equal(running.sockets.length, 2);
+  const status = await new Promise(resolve => listener({ type: "status" }, {}, resolve));
+  assert.equal(status.stopped, true);
+  assert.equal(status.connected, false);
+  assert.equal(status.controlledTabs, 0);
+  await new Promise(resolve => listener({ type: "toggle", stopped: false }, {}, resolve));
+  assert.equal(running.sockets.length, 3);
+});
+
+test("an unpaired extension shows its code, stores the handed token, and reconnects authenticated", async () => {
+  const running = worker({}, [], pairingBundle.outputFiles[0].text);
+  running.initialize();
+  await flush();
+  assert.equal(running.sockets.length, 1);
+  const pairing = running.sockets[0];
+  assert.deepEqual([...pairing.protocols], ["dsh-browser"], "no token means the socket asks to pair");
+  pairing.open();
+  await pairing.onmessage({ data: JSON.stringify({ method: "dsh.pairing",
+    params: { id: "abc12345", code: "4821", expiresAt: Date.now() + 60000, port: 43188 } }) });
+  await flush();
+  assert.equal(running.badges.at(-1), "4821", "the badge carries the code the user compares");
+  const listener = running.chrome.runtime.onMessage.listeners[0];
+  const status = await new Promise(resolve => listener({ type: "status" }, {}, resolve));
+  assert.equal(status.paired, false);
+  assert.equal(status.pairing.code, "4821");
+  assert.equal(status.connected, false);
+  await pairing.onmessage({ data: JSON.stringify({ method: "dsh.paired", params: { token: "fresh-token", port: 43188 } }) });
+  await flush();
+  assert.equal(running.stored.token, "fresh-token");
+  assert.equal(pairing.readyState, 3, "the pairing socket is closed after handing over the token");
+  [...running.timers.values()].find(timer => !timer.interval && timer.delay === 1000).fn();
+  await flush();
+  assert.equal(running.sockets.length, 2, "the extension reconnects with the stored token");
+  assert.deepEqual([...running.sockets[1].protocols], ["dsh-browser", "fresh-token"]);
+  running.sockets[1].open();
+  await flush();
+  assert.equal(running.badges.at(-1), "", "the pairing badge is cleared once paired and connected");
+});
+
+test("unpairing clears the stored token and returns the extension to pairing", async () => {
+  const running = worker({ token: "paired-token" });
+  running.initialize();
+  await flush();
+  running.sockets[0].open();
+  const listener = running.chrome.runtime.onMessage.listeners[0];
+  await new Promise(resolve => listener({ type: "unpair" }, {}, resolve));
+  await flush();
+  assert.equal(running.stored.token, undefined);
+  assert.equal(running.sockets.length, 2);
+  assert.deepEqual([...running.sockets[1].protocols], ["dsh-browser"]);
+});
+
+test("the port is configurable and a bad port is refused", async () => {
+  const running = worker({ token: "paired-token" });
+  running.initialize();
+  await flush();
+  assert.match(running.sockets[0].url, /:43188\/extension$/);
+  const listener = running.chrome.runtime.onMessage.listeners[0];
+  const failed = await new Promise(resolve => listener({ type: "port", port: 70000 }, {}, resolve));
+  assert.match(failed.error, /1-65535/);
+  await new Promise(resolve => listener({ type: "port", port: 43200 }, {}, resolve));
+  await flush();
+  assert.equal(running.stored.port, 43200);
+  assert.match(running.sockets.at(-1).url, /:43200\/extension$/);
+});
+

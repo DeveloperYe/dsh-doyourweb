@@ -1,0 +1,14 @@
+The Chromium debugger/CDP tab model in src/vendor/browser-model.js is adapted
+from Microsoft Playwright's packages/playwright-core/src/tools/mcp/browserModel.ts.
+Copyright (c) Microsoft Corporation. Licensed under the Apache License, Version 2.0.
+Upstream: https://github.com/microsoft/playwright
+Apache-2.0 license text: extension/APACHE-2.0.txt
+
+Playwright core is used for locators, accessibility snapshots, auto-waiting,
+browser actions, and screenshots. Its own copyright and license are retained
+in the installed playwright-core package.
+
+The companion extension's globe artwork is from Lucide 0.468.0.
+Upstream: https://github.com/lucide-icons/lucide/blob/0.468.0/icons/globe.svg
+Copyright (c) Cole Bemis and Lucide Contributors. Licensed under ISC.
+License text: extension/icons/LICENSE

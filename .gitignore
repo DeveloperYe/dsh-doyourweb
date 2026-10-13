@@ -1,0 +1,21 @@
+# Dependencies and generated builds
+node_modules/
+lib/
+
+# Local reference checkouts, test output, and package archives
+.local/
+coverage/
+captures/
+*.tgz
+*.log
+
+# Local configuration and browser pairing credentials
+.env
+.env.*
+!.env.example
+pairing.json
+.dsh/
+
+# Windows metadata
+Thumbs.db
+Desktop.ini

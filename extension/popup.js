@@ -1,0 +1,48 @@
+const enabled = document.querySelector("#enabled");
+const status = document.querySelector("#status");
+const pairing = document.querySelector("#pairing");
+const code = document.querySelector("#code");
+const port = document.querySelector("#port");
+const savePort = document.querySelector("#save-port");
+const unpair = document.querySelector("#unpair");
+
+async function refresh() {
+  const state = await chrome.runtime.sendMessage({ type: "status" });
+  if (state.error) throw new Error(state.error);
+  const waiting = state.pairing !== undefined && !state.stopped;
+  enabled.checked = !state.stopped;
+  port.value = String(state.port ?? 43187);
+  unpair.hidden = !state.paired;
+  pairing.hidden = !waiting;
+  code.textContent = state.pairing?.code ?? "";
+  status.textContent = waiting ? "\u7b49\u5f85 DSH \u786e\u8ba4\u4e0b\u9762\u7684\u9a8c\u8bc1\u7801"
+    : state.connected ? `\u5df2\u8fde\u63a5 \u00b7 ${state.availableTabs} \u4e2a\u6807\u7b7e\u9875 \u00b7 ${state.controlledTabs} \u4e2a\u53d7\u63a7`
+      : state.stopped ? "\u5df2\u6682\u505c" : state.paired ? "\u7b49\u5f85 DSH" : "\u672a\u914d\u5bf9";
+}
+
+function showError(error) { status.textContent = error.message; }
+
+async function send(message) {
+  const result = await chrome.runtime.sendMessage(message);
+  if (result.error) throw new Error(result.error);
+  await refresh();
+}
+
+enabled.addEventListener("change", async () => {
+  enabled.disabled = true;
+  try { await send({ type: "toggle", stopped: !enabled.checked }); }
+  catch (error) { showError(error); }
+  finally { enabled.disabled = false; }
+});
+savePort.addEventListener("click", async () => {
+  try { await send({ type: "port", port: Number(port.value) }); }
+  catch (error) { showError(error); }
+});
+unpair.addEventListener("click", async () => {
+  try { await send({ type: "unpair" }); }
+  catch (error) { showError(error); }
+});
+
+await refresh().catch(showError);
+const timer = setInterval(() => void refresh().catch(showError), 2000);
+window.addEventListener("pagehide", () => clearInterval(timer), { once: true });

@@ -9,11 +9,16 @@ captures/
 *.tgz
 *.log
 
+# Local browser-task output, not project documentation or extension assets
+/douyin-*-report.md
+/nailong.png
+
 # Local configuration and browser pairing credentials
 .env
 .env.*
 !.env.example
 pairing.json
+authorized.json
 .dsh/
 
 # Windows metadata

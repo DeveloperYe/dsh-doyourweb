@@ -1,0 +1,33 @@
+<!doctype html>
+<html lang="en">
+<meta charset="utf-8">
+<title>DSH Native WebMCP Test</title>
+<link rel="icon" href="/favicon.png">
+<h1>Native WebMCP fixture</h1>
+<p>Counter: <output id="counter">0</output></p>
+<iframe src="/webmcp-frame" title="Excluded child tools"></iframe>
+<script>
+window.webmcpReady = (async () => {
+  if (!document.modelContext) throw new Error("Native WebMCP is not enabled in this test browser");
+  let count = 0;
+  const show = () => { document.querySelector("#counter").textContent = String(count); };
+  const inputSchema = { type: "object", properties: { value: { type: "number" } },
+    required: ["value"], additionalProperties: false };
+  await document.modelContext.registerTool({ name: "read_counter", description: "Read the current counter",
+    inputSchema: { type: "object", additionalProperties: false }, annotations: { readOnlyHint: true },
+    execute: () => ({ count }) });
+  await document.modelContext.registerTool({ name: "add_to_counter", description: "Add a number to the counter",
+    inputSchema, execute: ({ value }) => { count += value; show(); return { count }; } });
+  await document.modelContext.registerTool({ name: "slow_counter", description: "A cancellable delayed increment",
+    inputSchema, execute: ({ value }, { signal }) => new Promise((resolve, reject) => {
+      const timer = setTimeout(() => { count += value; show(); resolve({ count }); }, 300);
+      signal.addEventListener("abort", () => { clearTimeout(timer); reject(signal.reason); }, { once: true });
+    }) });
+  await document.modelContext.registerTool({ name: "large_result", description: "Return a large test result",
+    inputSchema: { type: "object" }, execute: () => "<".repeat(20000) });
+  await document.modelContext.registerTool({ name: "consequential_action", description: "Must not run in the experiment",
+    inputSchema: { type: "object" }, annotations: { consequentialHint: true },
+    execute: () => { count = -999; show(); return { count }; } });
+})();
+</script>
+</html>

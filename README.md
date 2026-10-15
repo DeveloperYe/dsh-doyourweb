@@ -23,7 +23,7 @@ Browser tasks often depend on pages you have already opened and accounts you hav
 
 The project has two parts: a DSH plugin and a companion Manifest V3 extension. The plugin adds browser references to the native `@` and `/` menus; the extension supplies tab metadata and browser control. Once paired, the extension reconnects in the background without keeping its popup open.
 
-Current version: **ver0.1.0**. The package and browser extension use the numeric version `0.1.0`.
+Current version: **ver0.1.1**. The package and browser extension use the numeric version `0.1.1`.
 
 ## 02 · Preview
 
@@ -54,6 +54,10 @@ There is no public hosted demo. After the DSH plugin starts, its default local c
 
 Budgets count JavaScript characters, including JSON escaping and metadata, not model tokens. They limit returned context, not DOM traversal time. The project does not claim a measured token-saving percentage or a speed ranking.
 
+### WebMCP-First Control (Experimental)
+
+Version `0.1.1` checks for page-provided WebMCP tools before collecting a DOM snapshot. It prefers tools that cover the task, falls back to DOM when needed, and reuses unchanged catalogs and validators. Successful calls return a fresh token for the next call without relisting schemas. WebMCP requires a compatible browser API and site-provided tools; ordinary pages keep using DOM automation. See the [experiment guide](docs/webmcp-experiment.md) for requirements, tools and local browser tests.
+
 ## 04 · Architecture
 
 | Layer | Technology |
@@ -61,6 +65,7 @@ Budgets count JavaScript characters, including JSON escaping and metadata, not m
 | DSH host plugin | Node.js 22+, JavaScript ESM, Cordis integration |
 | Native client UI | React and DSH UI primitives |
 | Browser engine | Playwright Core 1.64.0, Chrome DevTools Protocol |
+| Site tools | `document.modelContext`, Ajv 8.20.0 argument validation |
 | Local bridge | WebSocket (`ws`), Zod validation |
 | Browser extension | Manifest V3, `chrome.tabs`, `chrome.debugger` |
 | Build and checks | esbuild, Node.js test runner, GitHub Actions |
@@ -111,7 +116,7 @@ This requires a published package. If the registry returns `404`, use the local 
 ### Build and Install Locally
 
 ```sh
-git clone https://github.com/SheepofSheep/dsh-doyourweb.git
+git clone --branch ver0.1.1 https://github.com/SheepofSheep/dsh-doyourweb.git
 cd dsh-doyourweb
 npm ci
 npm run build
@@ -127,6 +132,8 @@ In DSH, open **Plugins > Add Plugin** and enter the **absolute path to this buil
 4. Return to DSH, select a tab with `@`, and send your request.
 
 The extension popup and pairing page do not need to remain open. Installing the DSH plugin does not install the browser extension automatically.
+
+After upgrading the DSH plugin, fully quit DSH from its tray/background process and relaunch it so the new host module is loaded.
 
 ### Configuration
 
@@ -150,9 +157,11 @@ After referencing a page, you can ask:
 
 | Model tool | Use |
 | --- | --- |
-| `browser_read` | Read a snapshot; narrow with `selector`, `query` or `depth`; use `cursor` for remaining content. `limit` accepts 400-8,000 characters. |
+| `browser_read` | Default `mode: "auto"` discovers WebMCP tools first, otherwise returns a DOM snapshot. Use `mode: "dom"` when site tools do not cover the task; narrow with `selector`, `query` or `depth`. `cursor` paginates DOM content; `limit` accepts 400-8,000 characters. |
 | `browser_act` | Use the latest snapshot ID to click, fill, press, select, check, hover, scroll, navigate, go back/forward, wait or extract. |
 | `browser_capture` | Save a screenshot when visual inspection is needed. |
+| `browser_webmcp_list` | Discover or narrow page tools with `query`; reuse an existing catalog while it remains valid. |
+| `browser_webmcp_call` | Call a matching page tool using `catalog`, `name` and `arguments`; success returns `nextCatalog` for another call. |
 
 When multiple tabs are authorized, pass the selected tab's reference as `tab`.
 
@@ -163,6 +172,7 @@ Call `browser_read` for the single authorized tab:
 
 ```json
 {
+  "mode": "dom",
   "depth": 8,
   "limit": 2400
 }
@@ -198,6 +208,7 @@ src/
   client-entry.js    React UI and icons
   bridge.js          Pairing, extension connection and CDP relay
   engine.js          Snapshots, actions, extraction and screenshots
+  webmcp.js          Site-tool discovery, routing, validation and calls
   grants.js          Conversation-scoped tab authorization
   protocol.js        Tab references and Remote RPC descriptors
   output.js          Serialized output budgeting
@@ -235,7 +246,7 @@ CI is configured for unit tests on Windows and Linux, plus isolated headless Chr
 
 ### Roadmap
 
-This README describes the implemented `0.1.0` release. No delivery schedule for later versions is announced. Report bugs and discuss changes in [Issues](https://github.com/SheepofSheep/dsh-doyourweb/issues).
+This README describes the implemented `0.1.1` release. No delivery schedule for later versions is announced. Report bugs and discuss changes in [Issues](https://github.com/SheepofSheep/dsh-doyourweb/issues).
 
 ### FAQ
 

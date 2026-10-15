@@ -6,14 +6,27 @@ import path from "node:path";
 import assert from "node:assert/strict";
 import { BrowserBridge } from "../src/bridge.js";
 import { BrowserEngine } from "../src/engine.js";
+import { WebMCP } from "../src/webmcp.js";
+import { serialize } from "../src/output.js";
 import { parseRef } from "../src/protocol.js";
 
 const home = await mkdtemp(path.join(os.tmpdir(), "dsh-browser-test-"));
 const favicon = await readFile(new URL("../extension/icons/icon-16.png", import.meta.url));
+const webmcpFixture = await readFile(new URL("../test/fixtures/webmcp.html", import.meta.url), "utf8");
 const server = createServer((req, response) => {
   if (req.url === "/favicon.png") {
     response.setHeader("Content-Type", "image/png");
     response.end(favicon);
+    return;
+  }
+  if (req.url === "/webmcp") {
+    response.setHeader("Content-Type", "text/html; charset=utf-8");
+    response.end(webmcpFixture);
+    return;
+  }
+  if (req.url === "/webmcp-frame") {
+    response.setHeader("Content-Type", "text/html");
+    response.end('<script>document.modelContext.registerTool({name:"child_only",description:"Excluded child tool",execute:()=>"child"});</script>');
     return;
   }
   response.setHeader("Content-Type", "text/html");
@@ -26,7 +39,8 @@ let browser;
 async function launchBrowser() {
   return chromium.launchPersistentContext(path.join(home, "profile"), {
     headless: true, channel: "chromium",
-    args: [`--disable-extensions-except=${bridge.extensionPath}`, `--load-extension=${bridge.extensionPath}`],
+    args: ["--enable-experimental-web-platform-features",
+      `--disable-extensions-except=${bridge.extensionPath}`, `--load-extension=${bridge.extensionPath}`],
   });
 }
 
@@ -55,10 +69,10 @@ async function waitForPairing() {
   assert.fail("The extension must ask to pair when it has no token yet");
 }
 
-async function waitForTab() {
+async function waitForTab(url = `${fixtureUrl}/`) {
   const deadline = Date.now() + 15000;
   while (Date.now() < deadline) {
-    const tab = bridge.list().find(tab => tab.url === `${fixtureUrl}/` && tab.favicon);
+    const tab = bridge.list().find(tab => tab.url === url && tab.favicon);
     if (tab) return tab;
     await new Promise(resolve => setTimeout(resolve, 100));
   }
@@ -135,6 +149,65 @@ try {
   assert.equal(recovered.lastAction.cancelled, true);
   const capture = await engine.capture(tab.ref);
   assert.ok(capture.path.endsWith(".png"));
+  const webmcp = new WebMCP(engine);
+  try {
+    const empty = await webmcp.list(tab.ref);
+    assert.equal(empty.supported, true);
+    assert.deepEqual(empty.tools, [], "ordinary pages keep using DOM automation");
+    const ordinary = await webmcp.read(tab.ref);
+    assert.ok(ordinary.snapshot, "automatic discovery must fall back to a real DOM snapshot on ordinary pages");
+    let snapshots = 0;
+    const snapshot = engine.snapshot.bind(engine);
+    engine.snapshot = (...args) => { snapshots++; return snapshot(...args); };
+    const webPage = await browser.newPage();
+    await webPage.goto(`${fixtureUrl}/webmcp`);
+    await webPage.evaluate(() => window.webmcpReady);
+    const webTab = await waitForTab(`${fixtureUrl}/webmcp`);
+    const catalog = await webmcp.read(webTab.ref, { limit: 8000 });
+    assert.equal(catalog.tab, webTab.ref);
+    assert.equal(snapshots, 0, "automatic discovery must not collect ARIA when WebMCP tools are available");
+    const cached = await webmcp.list(webTab.ref, { limit: 8000 });
+    assert.equal(cached.catalog, catalog.catalog, "unchanged discovery reuses its catalog");
+    assert.ok(catalog.tools.some(tool => tool.name === "read_counter"));
+    assert.equal(catalog.tools.some(tool => tool.name === "child_only"), false, "iframe tools stay outside this experiment");
+    assert.ok(serialize(catalog).length <= 8000);
+    const increment = await webmcp.list(webTab.ref, { query: "add_to_counter" });
+    await assert.rejects(webmcp.call(webTab.ref, { catalog: increment.catalog, name: "add_to_counter",
+      arguments: { value: "bad" } }), /arguments/i);
+    assert.equal(await webPage.locator("#counter").textContent(), "0", "invalid arguments must never reach the callback");
+    const added = await webmcp.call(webTab.ref, { catalog: increment.catalog, name: "add_to_counter", arguments: { value: 3 } });
+    assert.equal(added.status, "completed", JSON.stringify(added));
+    assert.equal(JSON.parse(added.result).count, 3);
+    assert.equal(await webPage.locator("#counter").textContent(), "3");
+    await assert.rejects(webmcp.call(webTab.ref, { catalog: increment.catalog, name: "add_to_counter", arguments: { value: 3 } }), /catalog/i);
+    const chained = await webmcp.call(webTab.ref, { catalog: added.nextCatalog, name: "add_to_counter", arguments: { value: 2 } });
+    assert.equal(chained.status, "completed", JSON.stringify(chained));
+    assert.equal(JSON.parse(chained.result).count, 5);
+    assert.equal(snapshots, 0, "successful WebMCP calls must not collect DOM snapshots either");
+    const slow = await webmcp.list(webTab.ref, { query: "slow_counter" });
+    const timedOut = await webmcp.call(webTab.ref, { catalog: slow.catalog, name: "slow_counter", arguments: { value: 100 }, timeout: 40 });
+    assert.equal(timedOut.status, "timeout", JSON.stringify(timedOut));
+    assert.equal(timedOut.mayHaveLateEffects, true);
+    const blocked = await webmcp.list(webTab.ref, { query: "consequential_action" });
+    await assert.rejects(webmcp.call(webTab.ref, { catalog: blocked.catalog, name: "consequential_action", arguments: {} }), /consequential/i);
+    const large = await webmcp.list(webTab.ref, { query: "large_result" });
+    const bounded = await webmcp.call(webTab.ref, { catalog: large.catalog, name: "large_result", arguments: {}, limit: 400 });
+    assert.equal(bounded.truncated, true);
+    assert.ok(serialize(bounded).length <= 400);
+    const changed = await webmcp.list(webTab.ref, { query: "read_counter" });
+    await webPage.evaluate(() => new Promise(resolve => {
+      document.modelContext.addEventListener("toolchange", resolve, { once: true });
+      document.modelContext.registerTool({ name: "new_tool", description: "Invalidate the old catalog", execute: () => "new" });
+    }));
+    await assert.rejects(webmcp.call(webTab.ref, { catalog: changed.catalog, name: "read_counter", arguments: {} }), /changed/i);
+    assert.equal(await webPage.locator("#counter").textContent(), "5", "cancelled and blocked calls must not change the counter");
+    const stale = await webmcp.list(webTab.ref, { query: "read_counter" });
+    await webPage.reload();
+    await assert.rejects(webmcp.call(webTab.ref, { catalog: stale.catalog, name: "read_counter", arguments: {} }), /stale/i);
+    await webPage.close();
+    engine.snapshot = snapshot;
+    console.log("PASS: native WebMCP-first routing without DOM snapshots, ordinary-page fallback, cached discovery, chained single-use tokens, schema validation, iframe exclusion, cancellation, bounded output and stale tools/navigation through the real extension/CDP bridge.");
+  } finally { await webmcp.close(); }
   for (let index = 0; index < 100 && bridge.relays.size; index++) await new Promise(resolve => setTimeout(resolve, 50));
   assert.equal(bridge.relays.size, 0, "idle connections release the debugger");
   assert.equal(engine.states.has(tab.ref), false, "idle snapshots are released too");

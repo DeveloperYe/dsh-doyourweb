@@ -70,12 +70,43 @@ export class WebMCP {
     await Promise.all([...this.catalogs.keys()].map(ref => this.drop(ref)));
   }
 
+  async read(ref, options = {}, signal) {
+    if (options.mode === "dom" || options.cursor || this.engine.receipts.get(ref)?.mayHaveLateEffects) {
+      return this.engine.read(ref, options, signal);
+    }
+    const catalog = await this.list(ref, { limit: options.limit || this.engine.snapshotChars }, signal);
+    if (catalog.omitted > 0 || catalog.tools.some(tool => tool.available && !tool.annotations?.consequentialHint)) {
+      return catalog;
+    }
+    return this.engine.read(ref, options, signal);
+  }
+
+  catalogResult(ref, state, limit) {
+    if (!state.supported) return { tab: ref, supported: false, tools: [],
+      fallback: "Use browser_read with mode:dom or browser_act; no compatible document.modelContext API." };
+    const tools = [...state.tools];
+    const result = { tab: ref, supported: true, catalog: state.catalog, tools,
+      omitted: state.total - tools.length, untrusted: true };
+    while (tools.length && serialize(result).length > limit) { tools.pop(); result.omitted++; }
+    state.names = new Set(tools.map(tool => tool.name));
+    return result;
+  }
+
   async list(ref, options = {}, signal) {
     return this.engine.serial(ref, () => this.engine.withPage(ref, async page => {
       signal?.throwIfAborted();
-      await this.drop(ref);
       const document = await this.engine.document(page);
-      const handle = await page.evaluateHandle(discover, (options.query || "").toLowerCase());
+      const query = (options.query || "").toLowerCase();
+      const limit = Math.max(400, Math.min(8000, options.limit || 4000));
+      const cached = this.catalogs.get(ref);
+      if (cached && !cached.consumed && cached.query === query
+        && cached.document.epoch === document.epoch && cached.document.url === document.url
+        && !await cached.handle.evaluate(state => state.changed === true)) {
+        signal?.throwIfAborted();
+        return this.catalogResult(ref, cached, limit);
+      }
+      await this.drop(ref);
+      const handle = await page.evaluateHandle(discover, query);
       try {
         const metadata = await handle.evaluate(state => ({ supported: state.supported, total: state.total,
           tools: state.tools?.map(tool => {
@@ -89,14 +120,10 @@ export class WebMCP {
                 untrustedContentHint: tool.annotations?.untrustedContentHint === true } };
           }) }));
         signal?.throwIfAborted();
-        if (!metadata.supported) {
-          await dispose(handle);
-          return { supported: false, tools: [], fallback: "Use browser_read/browser_act; this page has no compatible document.modelContext API." };
-        }
         const after = await this.engine.document(page);
         if (after.epoch !== document.epoch || after.url !== document.url) throw new Error("Page navigated during WebMCP discovery; list again");
         const validators = new Map();
-        const tools = metadata.tools.map(tool => {
+        const tools = (metadata.tools || []).map(tool => {
           try {
             if (tool.schemaError) throw new Error(tool.schemaError);
             const Validator = tool.inputSchema.$schema?.includes("2020-12") ? Ajv2020 : Ajv;
@@ -106,13 +133,10 @@ export class WebMCP {
             return { name: tool.name, available: false, error: clip(`Invalid or unsupported input schema: ${error.message}`, 200) };
           }
         });
-        const catalog = randomUUID();
-        const result = { supported: true, catalog, tools, omitted: metadata.total - tools.length, untrusted: true };
-        const limit = Math.max(400, Math.min(8000, options.limit || 4000));
-        while (tools.length && serialize(result).length > limit) { tools.pop(); result.omitted++; }
-        const names = new Set(tools.map(tool => tool.name));
-        this.catalogs.set(ref, { handle, catalog, document, validators, names, consumed: false });
-        return result;
+        const state = { handle, catalog: randomUUID(), document, validators, query,
+          supported: metadata.supported, total: metadata.total || 0, tools, consumed: false };
+        this.catalogs.set(ref, state);
+        return this.catalogResult(ref, state, limit);
       } catch (error) {
         await dispose(handle);
         throw error;
@@ -150,7 +174,7 @@ export class WebMCP {
       const uncertain = (status, error) => {
         this.engine.receipts.set(ref, { kind: "webmcp", name: options.name, mayHaveLateEffects: true });
         return bounded({ ...base, status, error: clip(error, 300), mayHaveLateEffects: true,
-          retry: "Inspect current page state before retrying; the tool may already have run." }, limit);
+          retry: "Inspect with browser_read mode:dom before retrying; the tool may already have run." }, limit);
       };
       try {
         // Start without awaiting the site's promise: the bridge has a shorter RPC
@@ -174,8 +198,19 @@ export class WebMCP {
           const result = await state.handle.evaluate((browserState, size) => ({ status: browserState.status,
             result: browserState.result?.slice(0, size), totalChars: browserState.result?.length, error: browserState.error,
           }), limit);
-          if (result.status === "completed") return bounded({ ...base, ...result,
-            ...(result.totalChars > limit ? { truncated: true } : {}) }, limit);
+          if (result.status === "completed") {
+            const current = await this.engine.document(page);
+            const changed = await state.handle.evaluate(browserState => browserState.changed);
+            // Rotate the consumed token, not the schemas: completed calls can chain
+            // without another model discovery turn while old tokens stay invalid.
+            if (!changed && current.epoch === state.document.epoch && current.url === state.document.url) {
+              state.catalog = randomUUID();
+              state.consumed = false;
+            }
+            return bounded({ ...base, ...result,
+              ...(!state.consumed ? { nextCatalog: state.catalog } : {}),
+              ...(result.totalChars > limit ? { truncated: true } : {}) }, limit);
+          }
           if (result.status === "error") return uncertain("error", result.error);
           if (Date.now() >= deadline) return uncertain("timeout", "WebMCP tool exceeded its timeout; cancellation requested");
           await delay(Math.min(100, deadline - Date.now()), undefined, { signal });
@@ -183,7 +218,7 @@ export class WebMCP {
       } catch (error) {
         return uncertain(signal?.aborted ? "cancelled" : "error", error.message || error);
       } finally {
-        await this.drop(ref);
+        if (state.consumed) await this.drop(ref);
       }
     }, signal));
   }

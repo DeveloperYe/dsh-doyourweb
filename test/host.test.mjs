@@ -28,3 +28,5 @@ test("a tab cited by the user stays authorized across steps and restarts",
   () => lifecycle("grants", /PASS: a cited tab stays authorized/));
 test("multi-tab initial context shares one serialized output budget",
   () => lifecycle("budget", /PASS: initial context shares/));
+test("host references and read tools prefer WebMCP and retain explicit DOM fallback",
+  () => lifecycle("routing", /PASS: host context and browser_read discover/));

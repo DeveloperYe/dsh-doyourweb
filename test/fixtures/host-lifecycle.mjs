@@ -4,6 +4,7 @@ import assert from "node:assert/strict";
 import { apply } from "../../src/host.js";
 import { BrowserEngine } from "../../src/engine.js";
 import { BrowserBridge } from "../../src/bridge.js";
+import { WebMCP } from "../../src/webmcp.js";
 
 async function openPort(port = 0) {
   const server = createServer();
@@ -30,6 +31,7 @@ try {
   const plugin = { name: "browser-tabs-test", inject: ["tools", "typert"],
     apply: ctx => apply(ctx, { home: process.argv[2], port }) };
   if (process.argv[3] === "budget") {
+    WebMCP.prototype.list = async () => ({ supported: false, tools: [] });
     const reads = [];
     BrowserEngine.prototype.read = async (ref, options) => {
       reads.push(options.limit);
@@ -54,6 +56,40 @@ try {
     assert.equal(current.tab, "dsh-browser://runtime/1", "old grants must not obscure the only live tab");
     await fiber.dispose();
     console.log("PASS: initial context shares one budget across referenced tabs, including escaping.");
+  } else if (process.argv[3] === "routing") {
+    const events = [];
+    WebMCP.prototype.list = async ref => {
+      events.push(`discover:${ref}`);
+      return { tab: ref, supported: true, catalog: "native-tools", tools: ref.endsWith("/1")
+        ? [{ name: "read_page", available: true, inputSchema: { type: "object" } }] : [], omitted: 0 };
+    };
+    BrowserEngine.prototype.read = async ref => {
+      events.push(`dom:${ref}`);
+      return { tab: ref, snapshot: "dom", content: "Page text" };
+    };
+    const fiber = root.plugin(plugin);
+    await fiber.await();
+    const agent = { session: { id: "routing-session" } };
+    const refs = ["dsh-browser://runtime/1", "dsh-browser://runtime/2"];
+    const user = { id: "routing-message", source: { kind: "user" }, content: [{ type: "text",
+      text: refs.map(ref => `@[Tab](${ref})`).join(" ") }] };
+    const decision = await root.waterfall("agent/pre-step", { agent },
+      () => Promise.resolve({ kind: "enter", messages: [user] }));
+    assert.deepEqual(events, [`discover:${refs[0]}`, `discover:${refs[1]}`, `dom:${refs[1]}`]);
+    const context = decision.messages[0].content.at(-1).text;
+    assert.ok(context.length <= 2400);
+    assert.match(context, /native-tools/);
+    assert.match(context, /browser_webmcp_call/);
+    const read = tools.get("browser_read");
+    assert.equal((await read.execute({ tab: refs[0] }, { agent })).catalog, "native-tools");
+    const count = events.length;
+    assert.equal((await read.execute({ tab: refs[0], mode: "dom" }, { agent })).snapshot, "dom");
+    assert.deepEqual(events.slice(count), [`dom:${refs[0]}`]);
+    await root.waterfall("agent/pre-step", { agent },
+      () => Promise.resolve({ kind: "enter", messages: [user] }));
+    assert.equal(events.length, count + 1, "replaying a prepared user message must not read or discover again");
+    await fiber.dispose();
+    console.log("PASS: host context and browser_read discover WebMCP before DOM and allow intentional fallback.");
   } else if (process.argv[3] === "grants") {
     // DSH claims one input batch per step, so only the step that carries the user
     // message sees the citation; every later step must keep the grant.

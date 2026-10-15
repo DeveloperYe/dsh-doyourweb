@@ -23,7 +23,7 @@
 
 项目由 DSH 插件和配套的 Manifest V3 浏览器扩展组成。插件接入原生 `@`、`/` 菜单，扩展提供标签页信息和控制通道。完成一次配对后，扩展会在后台重连，不必一直打开弹窗。
 
-当前版本为 **ver0.1.0**，包和浏览器扩展中的数字版本为 `0.1.0`。
+当前版本为 **ver0.1.1**，包和浏览器扩展中的数字版本为 `0.1.1`。
 
 ## 02 · 功能预览
 
@@ -54,9 +54,9 @@
 
 预算按 JavaScript 字符计算，包含 JSON 转义和元数据，不等于模型 token 数。它限制的是返回内容，不是 DOM 遍历耗时。项目目前没有经过测量的省 token 百分比或速度排名。
 
-### WebMCP 实验（`Trywebmcp`）
+### WebMCP 优先控制（实验性）
 
-这个分支新增页面 WebMCP 工具的发现与调用，使用 `document.modelContext`，保留现有网页操作工具。已发布的 npm `0.1.0` 尚不包含此功能。浏览器要求、工具用法和本地测试见[实验说明](docs/webmcp-experiment.md)。
+`0.1.1` 会先检测页面提供的 WebMCP 工具。有适合任务的工具就调用，没有再读取普通页面快照。页面和工具注册未变化时，复用目录和参数校验器；成功调用后返回新的单次凭据，连续操作不用反复列工具。WebMCP 需要浏览器 API 和网站工具支持，普通网页仍使用 DOM 操作。浏览器要求、工具用法和本地测试见[实验说明](docs/webmcp-experiment.md)。
 
 ## 04 · 技术架构
 
@@ -65,6 +65,7 @@
 | DSH 主机插件 | Node.js 22+、JavaScript ESM、Cordis 集成 |
 | 原生客户端 UI | React、DSH UI primitives |
 | 浏览器引擎 | Playwright Core 1.64.0、Chrome DevTools Protocol |
+| 网站工具 | `document.modelContext`、Ajv 8.20.0 参数校验 |
 | 本地桥接 | WebSocket（`ws`）、Zod 校验 |
 | 浏览器扩展 | Manifest V3、`chrome.tabs`、`chrome.debugger` |
 | 构建与检查 | esbuild、Node.js 测试运行器、GitHub Actions |
@@ -115,7 +116,7 @@ dsh-doyourweb
 ### 构建并安装本地版本
 
 ```sh
-git clone https://github.com/SheepofSheep/dsh-doyourweb.git
+git clone --branch ver0.1.1 https://github.com/SheepofSheep/dsh-doyourweb.git
 cd dsh-doyourweb
 npm ci
 npm run build
@@ -131,6 +132,8 @@ npm run build
 4. 回到 DSH，用 `@` 选择标签页并发送任务。
 
 配对页面和扩展弹窗都可以关闭。安装 DSH 插件不会自动安装浏览器扩展。
+
+升级 DSH 插件后，需要从托盘完全退出 DSH 再重新打开，确保加载新版本的主机模块。
 
 ### 配置
 
@@ -154,9 +157,11 @@ npm run build
 
 | 模型工具 | 用法 |
 | --- | --- |
-| `browser_read` | 读取快照；用 `selector`、`query`、`depth` 缩小范围，用 `cursor` 获取剩余内容。`limit` 范围为 400～8,000 字符。 |
+| `browser_read` | 默认 `mode: "auto"` 先检测 WebMCP，没有可用工具时返回 DOM 快照。工具不适合任务时用 `mode: "dom"`，可按 `selector`、`query`、`depth` 缩小范围；`cursor` 对 DOM 内容分页，`limit` 范围为 400～8,000 字符。 |
 | `browser_act` | 使用最新快照 ID，执行点击、填入、按键、选择、勾选、悬停、滚动、导航、前进后退、等待或提取。 |
 | `browser_capture` | 需要检查画面时，将截图保存到本地。 |
+| `browser_webmcp_list` | 发现页面工具，或通过 `query` 缩小工具目录；目录有效时可直接复用。 |
+| `browser_webmcp_call` | 用 `catalog`、`name`、`arguments` 调用匹配的页面工具，成功后返回 `nextCatalog` 供下一次调用。 |
 
 同时授权了多个标签页时，工具调用需要通过 `tab` 指定已引用的页面。
 
@@ -167,6 +172,7 @@ npm run build
 
 ```json
 {
+  "mode": "dom",
   "depth": 8,
   "limit": 2400
 }
@@ -202,6 +208,7 @@ src/
   client-entry.js    React UI 与图标
   bridge.js          配对、扩展连接和 CDP 转发
   engine.js          快照、操作、提取与截图
+  webmcp.js          网站工具发现、路由、校验与调用
   grants.js          按会话管理标签页授权
   protocol.js        页面引用与 Remote RPC 描述
   output.js          序列化输出预算
@@ -239,7 +246,7 @@ CI 配置了 Windows、Linux 单元测试，以及 Linux 上隔离的无头 Chro
 
 ### Roadmap
 
-本文只介绍已经实现的 `0.1.0` 版本，暂未公布后续版本的交付时间。问题反馈和功能讨论见 [Issues](https://github.com/SheepofSheep/dsh-doyourweb/issues)。
+本文只介绍已经实现的 `0.1.1` 版本，暂未公布后续版本的交付时间。问题反馈和功能讨论见 [Issues](https://github.com/SheepofSheep/dsh-doyourweb/issues)。
 
 ### FAQ
 

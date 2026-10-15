@@ -1,6 +1,6 @@
 {
   "name": "dsh-doyourweb",
-  "version": "0.1.0",
+  "version": "0.1.1",
   "description": "Reference and control existing Chrome and Edge tabs from DeepSeek Harness",
   "type": "module",
   "license": "MIT",

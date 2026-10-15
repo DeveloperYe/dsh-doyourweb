@@ -54,6 +54,10 @@ There is no public hosted demo. After the DSH plugin starts, its default local c
 
 Budgets count JavaScript characters, including JSON escaping and metadata, not model tokens. They limit returned context, not DOM traversal time. The project does not claim a measured token-saving percentage or a speed ranking.
 
+### WebMCP Experiment (`Trywebmcp`)
+
+This branch adds discovery and execution of tools registered by the selected page through `document.modelContext`, while keeping the existing DOM tools. It is not included in the published `0.1.0` npm package. See the [experiment guide](docs/webmcp-experiment.md) for requirements, tools and local browser tests.
+
 ## 04 · Architecture
 
 | Layer | Technology |

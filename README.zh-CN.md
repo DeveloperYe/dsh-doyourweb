@@ -54,6 +54,10 @@
 
 预算按 JavaScript 字符计算，包含 JSON 转义和元数据，不等于模型 token 数。它限制的是返回内容，不是 DOM 遍历耗时。项目目前没有经过测量的省 token 百分比或速度排名。
 
+### WebMCP 实验（`Trywebmcp`）
+
+这个分支新增页面 WebMCP 工具的发现与调用，使用 `document.modelContext`，保留现有网页操作工具。已发布的 npm `0.1.0` 尚不包含此功能。浏览器要求、工具用法和本地测试见[实验说明](docs/webmcp-experiment.md)。
+
 ## 04 · 技术架构
 
 | 层级 | 技术 |

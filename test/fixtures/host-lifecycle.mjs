@@ -72,6 +72,12 @@ try {
     const read = tools.get("browser_read");
     await assert.rejects(async () => read.execute({ tab: ref, limit: 400 }, { agent }), /offline/i);
     await assert.rejects(async () => read.execute({ tab: "dsh-browser://profile-1/99", limit: 400 }, { agent }), /not referenced by the user/i);
+    const webmcpList = tools.get("browser_webmcp_list");
+    const webmcpCall = tools.get("browser_webmcp_call");
+    assert.equal(webmcpList.presentCall({}).kind, "read");
+    assert.equal(webmcpCall.presentCall({}).kind, "other", "site hints must not downgrade execution to a read tool");
+    await assert.rejects(async () => webmcpList.execute({ tab: "dsh-browser://profile-1/99" }, { agent }), /not referenced by the user/i);
+    await assert.rejects(async () => webmcpCall.execute({ tab: "dsh-browser://profile-1/99", catalog: "test", name: "test" }, { agent }), /not referenced by the user/i);
     await first.dispose();
     // A new activation (a DSH restart) reloads the conversation's grants.
     const second = root.plugin(plugin);

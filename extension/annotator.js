@@ -31,11 +31,29 @@ export function installAnnotator({ binding, title = "DSH DoYourWeb", active = fa
   const label = document.createElement("label"); const screenshot = document.createElement("input"); screenshot.type = "checkbox";
   screenshot.checked = !!window.__dshAnnotationDraft?.screenshot;
   label.append(screenshot, "附局部截图");
-  const save = document.createElement("button"); save.textContent = "添加到会话"; save.className = "primary";
+  const save = document.createElement("button"); save.textContent = "加入聊天草稿"; save.className = "primary";
   footer.append(label, save); panel.append(target, comment, footer);
   const status = document.createElement("output"); status.setAttribute("aria-live", "polite");
   root.append(nav, panel, status);
   document.documentElement.append(host);
+  nav.style.touchAction = "none"; nav.style.cursor = "grab"; brand.title = "拖动浮窗";
+  let dragging;
+  function position(x, y) {
+    const box = host.getBoundingClientRect();
+    host.style.right = "auto";
+    host.style.left = `${Math.max(0, Math.min(x, innerWidth - box.width))}px`;
+    host.style.top = `${Math.max(0, Math.min(y, innerHeight - box.height))}px`;
+  }
+  function keepVisible() { const box = host.getBoundingClientRect(); position(box.x, box.y); }
+  nav.onpointerdown = event => {
+    if (!event.isTrusted || event.button !== 0 || event.target.closest("button")) return;
+    const box = host.getBoundingClientRect(); dragging = { x: event.clientX - box.x, y: event.clientY - box.y };
+    nav.setPointerCapture(event.pointerId); nav.style.cursor = "grabbing"; event.preventDefault();
+  };
+  nav.onpointermove = event => { if (dragging) position(event.clientX - dragging.x, event.clientY - dragging.y); };
+  nav.onpointerup = nav.onpointercancel = nav.onlostpointercapture = () => { dragging = undefined; nav.style.cursor = "grab"; };
+  window.addEventListener("resize", keepVisible);
+  if (window.__dshAnnotationDraft?.position) position(...window.__dshAnnotationDraft.position);
   const highlight = document.createElement("div");
   highlight.style.cssText = "position:fixed;pointer-events:none;border:2px solid #18a16a;background:#18a16a1a;z-index:2147483646;display:none";
   document.documentElement.append(highlight);
@@ -85,7 +103,7 @@ export function installAnnotator({ binding, title = "DSH DoYourWeb", active = fa
     if (!event.isTrusted) return;
     const element = event.composedPath().find(item => item instanceof Element);
     if (!element) return;
-    selected = describe(element); stop(); target.textContent = selected.selector; panel.hidden = false; comment.focus();
+    selected = describe(element); stop(); target.textContent = selected.selector; panel.hidden = false; keepVisible(); comment.focus();
   }
   function blockPointer(event) { if (selecting && !event.composedPath().includes(host)) { event.preventDefault(); event.stopImmediatePropagation(); } }
   function keyboard(event) { if (event.key === "Escape") { stop(); panel.hidden = true; } }
@@ -96,10 +114,11 @@ export function installAnnotator({ binding, title = "DSH DoYourWeb", active = fa
     stop(); document.removeEventListener("pointermove", move, true); document.removeEventListener("click", pick, true);
     document.removeEventListener("keydown", keyboard, true); host.remove(); highlight.remove(); delete window[key];
     delete window.__dshAnnotationDraft;
+    window.removeEventListener("resize", keepVisible);
     for (const type of ["pointerdown", "mousedown", "pointerup", "mouseup"]) document.removeEventListener(type, blockPointer, true);
   };
-  save.onclick = async event => {
-    if (!trusted(event, save)) return;
+  async function saveAnnotation(event, control) {
+    if (!trusted(event, control) || save.disabled) return;
     if (!selected || !comment.value.trim()) { status.textContent = "请先选择元素并填写批注。"; return; }
     save.disabled = true;
     try {
@@ -107,13 +126,20 @@ export function installAnnotator({ binding, title = "DSH DoYourWeb", active = fa
       if (value.url !== location.href) throw new Error("页面已变化，请重新选择元素");
       host.style.visibility = "hidden";
       const result = await window[binding](value);
-      status.textContent = `已添加到会话：${result.title}`;
-      comment.value = ""; panel.hidden = true;
+      status.textContent = `已加入 ${result.title} 草稿，回到聊天按 Enter 发送；可继续批注。`;
+      comment.value = ""; selected = undefined; panel.hidden = true; keepVisible();
     } catch (error) { status.textContent = error.message; }
     finally { host.style.visibility = ""; save.disabled = false; }
-  };
+  }
+  save.onclick = event => saveAnnotation(event, save);
+  comment.addEventListener("keydown", event => {
+    if (event.key === "Enter" && !event.shiftKey && !event.isComposing) {
+      event.preventDefault(); event.stopPropagation(); void saveAnnotation(event, comment);
+    }
+  });
+  comment.placeholder = "填写修改说明；Enter 加入草稿，Shift+Enter 换行";
   document.addEventListener("pointermove", move, true); document.addEventListener("click", pick, true); document.addEventListener("keydown", keyboard, true);
   for (const type of ["pointerdown", "mousedown", "pointerup", "mouseup"]) document.addEventListener(type, blockPointer, true);
-  window[key] = { host, select: begin, binding, close: close.onclick, draft: () => ({ comment: comment.value, screenshot: screenshot.checked }) };
+  window[key] = { host, select: begin, binding, close: close.onclick, draft: () => ({ comment: comment.value, screenshot: screenshot.checked, position: [host.getBoundingClientRect().x, host.getBoundingClientRect().y] }) };
   return active ? begin().then(() => ({ installed: true })) : { installed: true };
 }

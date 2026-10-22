@@ -15,15 +15,31 @@ export function annotationData(value) {
 
 export class Annotations {
   constructor(bridge, { submit } = {}) {
-    this.bridge = bridge; this.submit = submit; this.pages = new Map(); this.worlds = new Map(); this.targets = new Map(); this.clients = new Map(); this.closed = false;
+    this.bridge = bridge; this.submit = submit || (request => this.enqueue(request)); this.pending = new Map(); this.pages = new Map(); this.worlds = new Map(); this.targets = new Map(); this.clients = new Map(); this.closed = false;
   }
-  currentSession({ client, revision, sessionId, title, active }) {
+  currentSession({ client, revision, sessionId, title, active, acknowledgements = [] }) {
     if (typeof client !== "string" || !client || !Number.isSafeInteger(revision) || revision < 0
       || typeof sessionId !== "string" || !sessionId || typeof active !== "boolean") throw new Error("Invalid annotation session");
     if ((this.clients.get(client)?.revision ?? -1) >= revision) return { ok: true };
     this.clients.set(client, { revision, sessionId, title: clip(title || "当前会话", 120), active, time: Date.now() });
     if (this.clients.size > 200) this.clients.delete(this.clients.keys().next().value);
-    return { ok: true };
+    for (const ack of acknowledgements) {
+      const item = this.pending.get(ack.id);
+      if (item?.client !== client || item.request.sessionId !== sessionId) continue;
+      this.pending.delete(ack.id); clearTimeout(item.timer);
+      ack.error ? item.reject(new Error(ack.error)) : item.resolve({ accepted: true });
+    }
+    const drafts = active ? [...this.pending.values()].filter(item => item.request.sessionId === sessionId && (!item.client || item.client === client)) : [];
+    for (const item of drafts) item.client = client;
+    return { ok: true, drafts: drafts.map(item => item.request) };
+  }
+  enqueue(request) {
+    if (this.pending.has(request.requestId)) return this.pending.get(request.requestId).promise;
+    if (this.pending.size >= 50) throw new Error("待处理批注过多，请先回到 DSH 聊天窗口");
+    const item = { request };
+    item.promise = new Promise((resolve, reject) => { item.resolve = resolve; item.reject = reject; });
+    item.timer = setTimeout(() => { this.pending.delete(request.requestId); item.reject(new Error("批注尚未确认加入输入框，请回到目标会话检查后重试")); }, 20000);
+    this.pending.set(request.requestId, item); return item.promise;
   }
   bind(ref, target) { this.targets.set(ref, target); if (this.targets.size > 100) this.targets.delete(this.targets.keys().next().value); }
   target(ref) {
@@ -51,7 +67,7 @@ export class Annotations {
       content.push({ type: "image", mediaType: "image/png", data: bytes.toString("base64"), name: "页面批注.png" });
     }
     const requestId = /^[a-f0-9-]{36}$/i.test(value.requestId || "") ? value.requestId : randomUUID();
-    const result = await this.submit({ sessionId: target.sessionId, requestId, mode: "queue", content });
+    const result = await this.submit({ sessionId: target.sessionId, requestId, mode: "draft", content });
     if (!result?.accepted) throw new Error("Conversation did not accept this annotation");
     return { accepted: true, title: target.title || "当前会话" };
   }
@@ -142,5 +158,5 @@ export class Annotations {
     try { return await this.attach(ref, page, true, target); }
     finally { this.bridge.release?.(ref); }
   }
-  async close() { this.closed = true; await Promise.all([...this.pages.keys()].map(ref => this.detach(ref))); this.clients.clear(); this.targets.clear(); }
+  async close() { this.closed = true; for (const item of this.pending.values()) { clearTimeout(item.timer); item.reject(new Error("Annotation service stopped")); } this.pending.clear(); await Promise.all([...this.pages.keys()].map(ref => this.detach(ref))); this.clients.clear(); this.targets.clear(); }
 }

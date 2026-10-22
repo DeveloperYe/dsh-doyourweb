@@ -101,7 +101,7 @@ export function apply(ctx, { browserIcon, tabIcon, appIcon = browserIcon, applic
             const appName = item.displayName || item.product || item.name;
             const label = item.comment || [appName, item.title].filter(Boolean).join(" · ");
             const ref = `@[${label.replace(/[\[\]\\\r\n]/g, " ").slice(0, 128)}](${item.ref})`;
-            return { name: item.comment || appName, description: item.comment ? item.selector : item.title, section, icon: applicationIcon(item),
+            return { name: item.comment || appName, description: item.installed && !item.windowId ? `${item.title} · 按需启动` : item.title, section, icon: applicationIcon(item),
               value: JSON.stringify({ ref, label, source }) };
           });
         } catch { return []; }

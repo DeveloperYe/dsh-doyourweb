@@ -33,6 +33,7 @@ import { Context } from "@deepseek-ai/cordis";
 import { PACKAGE, descriptors, hostContribution, remoteContribution } from "../src/protocol.js";
 import { compactReferences } from "../src/reference-folders.js";
 import { balanceFileReferences } from "../src/file-references.js";
+import { verifyDraftInput } from "./verify-dsh-drafts.mjs";
 
 const root = fileURLToPath(new URL("..", import.meta.url));
 const argument = name => {
@@ -179,8 +180,10 @@ async function verifyBuiltClient(gatewayBundle, inputBundle) {
   const gateway = await loadClientBundle(gatewayBundle);
   const tab = { ref: "dsh-browser://profile/7", title: "Example", url: "https://example.com/page", browser: "Edge" };
   const calls = [];
-  const connection = fakeConnection(calls, endpoint => ({ ok: true,
-    value: endpoint === "browserTabs/list" ? { tabs: [tab], connected: true } : { ok: true } }));
+  const draft = { sessionId: "verify", requestId: "verify-note", content: [{ type: "text", text: "Fix this button" }] };
+  const connection = fakeConnection(calls, (endpoint, args) => ({ ok: true,
+    value: endpoint === "browserTabs/list" ? { tabs: [tab], connected: true }
+      : endpoint === "browserTabs/annotationSession" ? { ok: true, drafts: args.request.active ? [draft] : [] } : { ok: true } }));
   const context = new Context();
   context.provide("connection", connection);
   context.provide("typert", { remotes: { register: () => () => {} } });
@@ -196,6 +199,12 @@ async function verifyBuiltClient(gatewayBundle, inputBundle) {
   const session = { sessionId: "verify" }, binding = { sessionId: "verify", session, ctx: context };
   context.provide("sessions", { sessionOf: () => session, binding: id => id === "verify" ? binding : undefined,
     list: { getSnapshot: () => ({ byId: { verify: { title: "Verify conversation" } } }) } });
+  const draftState = { draft: "Existing text", draftRev: 1, phase: "plain", attachmentIds: [] };
+  const projection = { detectText: draftState.draft };
+  context.provide("conversation", { input: { shell: () => ({ projection, state: { getSnapshot: () => draftState }, actions: {
+    insertText(text, span) { assert.equal(span.start, projection.detectText.length); draftState.draft += text; projection.detectText += text; draftState.draftRev++; return true; },
+    persistDraft() {}, submit() { assert.fail("draft insertion cannot submit a model message"); },
+  } }) } });
   let annotationSlot;
   context.provide("slots", { inject: (_name, factory) => factory(), register: (definition, component) => { annotationSlot = { definition, component }; } });
   new InputTriggerService(context);
@@ -215,10 +224,12 @@ async function verifyBuiltClient(gatewayBundle, inputBundle) {
   await new Promise(resolve => setTimeout(resolve, 0));
   const activation = calls.find(call => call.endpoint === "browserTabs/annotationSession").args.request;
   assert.equal(activation.sessionId, "verify"); assert.equal(activation.title, "Verify conversation"); assert.equal(activation.active, true);
+  assert.match(draftState.draft, /^Existing text\n\nFix this button/);
   for (const cleanup of cleanups) cleanup?.();
   await new Promise(resolve => setTimeout(resolve, 0));
   const deactivation = calls.filter(call => call.endpoint === "browserTabs/annotationSession").at(-1).args.request;
   assert.equal(deactivation.active, false); assert.ok(deactivation.revision > activation.revision);
+  assert.deepEqual(deactivation.acknowledgements, [{ id: "verify-note" }]);
   const source = sources.find(candidate => candidate.name === "browser-tabs");
   assert.ok(source, "the built client must register its @ source");
   const items = await source.candidates({ sessionId: "verify" }, { query: "", quoted: false, drilled: false });
@@ -344,9 +355,11 @@ const bundles = await extract([
   "dsh-client-ui-input-trigger/lib/client.js",
   "dsh-client-ui-reference/lib/client.js",
   "dsh-file-reference-local/lib/index.js",
+  "dsh-client-ui-conversation/lib/client.js",
 ]);
 await verifyRegistry(bundles.get("dsh-typert-registry/lib/index.js"));
 await verifyGateway(bundles.get("dsh-api-gateway/lib/client.js"));
 await verifyBuiltClient(bundles.get("dsh-api-gateway/lib/client.js"), bundles.get("dsh-client-ui-input-trigger/lib/client.js"));
 await verifyNativeReferenceSource(bundles.get("dsh-client-ui-reference/lib/client.js"), bundles.get("dsh-file-reference-local/lib/index.js"));
+await verifyDraftInput(bundles.get("dsh-client-ui-conversation/lib/client.js"), root);
 console.log(`\nAll DSH contract checks passed against ${path.basename(archive)}.`);

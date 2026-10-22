@@ -1,6 +1,6 @@
 # 页面批注与应用控制
 
-本指南对应 `0.1.2`。浏览器控制支持 Chrome / Edge，运行程序的 `@` 枚举目前只支持 Windows。
+本指南对应 `0.1.3`。浏览器控制支持 Chrome / Edge，运行程序的 `@` 枚举目前只支持 Windows。
 
 ## 本地试用
 
@@ -15,7 +15,7 @@
 
 ## 页面批注
 
-先在 DSH 打开目标会话，再打开扩展弹窗，点“批注当前页面”。已经被 DSH 控制的页面右上角也会出现“批注”按钮。选择元素、填写说明，可勾选局部截图，再点“添加到会话”。批注直接成为这段会话的用户消息；模型正在运行时排队处理，不打断当前步骤，不用再通过 `@` 引用。
+先在 DSH 打开目标会话，再打开扩展弹窗，点“批注当前页面”。已经被 DSH 控制的页面右上角也会出现“批注”按钮。选择元素、填写说明，可勾选局部截图，按 Enter 或点“加入聊天草稿”。每条批注会追加到目标会话的输入框，可积累多条，保留原有文字、引用和附件；回到聊天按 Enter 一起发送。Shift+Enter 换行。拖动工具条标题可移动浮窗，窗口缩小时会保持在可见范围内。
 
 工具条会显示发送目标的会话标题。重新开始选取时会重新确认当前会话；如果多个 DSH 窗口打开了不同会话，请从目标会话调用 `browser_annotate` 明确指定，不猜测发送位置。
 
@@ -33,7 +33,7 @@
 
 DSH 本地来源默认只返回 20 个候选，且目录排在文件前。目录占满上限时，插件会从同一个工作目录补回文件候选，最多占用一半名额，不扩大总上限、不递归扫描，也不读取文件内容。默认不补隐藏文件。没有文件候选时，`@` 主列表仍显示“搜索文件”，可输入名称搜索子目录，文件分组不再直接消失。
 
-应用列表只显示有真实可见顶层窗口、路径对应 `.exe` 的 Windows 程序，过滤托盘、输入法、系统壳和后台辅助窗口。最小化的正常应用保留，同一个程序打开的多个窗口分别列出，前台窗口优先；名称和窗口标题都会参与搜索，也支持 `Unity.exe` 这样的查询。`@` 菜单从本机可执行文件批量读取程序图标，并按路径缓存；读取失败时显示通用应用图标。图标不进入模型上下文。选择目标后发送任务，例如：
+应用列表显示有真实可见顶层窗口、路径对应 `.exe` 的 Windows 程序，并补充开始菜单快捷方式指向的已安装程序。未打开的程序标注“按需启动”；商店应用或没有 `.exe` 目标的快捷方式暂不列入。窗口列表过滤托盘、输入法、系统壳和后台辅助窗口。最小化的正常应用保留，同一个程序打开的多个窗口分别列出，前台窗口优先；名称和窗口标题都会参与搜索，也支持 `Unity.exe` 这样的查询。`@` 菜单从本机可执行文件批量读取程序图标，并按路径缓存；读取失败时显示通用应用图标。图标不进入模型上下文。选择目标后发送任务，例如：
 
 > @Unity 检查当前项目有哪些场景。先找官方 MCP 或 CLI，再找社区接口；只有接口不能完成任务时才使用桌面操作。
 
@@ -80,7 +80,7 @@ MCP 支持 stdio 和 Streamable HTTP。非本机远程接口要求 HTTPS；本�
 
 发现卡片的“配置”按钮会打开候选模板；必填参数或凭据缺失时也会进入配置页。修改 `args`、`env`、`headers` 等并保存。遇到 `requiresConfiguration: true`，完成文档要求的参数后将其改为 `false`。同 ID 的配置变化会撤销旧连接，并取消尚在安装或握手的旧连接请求，需要重新审批。凭据保存在本机 `applications.json`，管理列表不回显它们；编辑器模板中的空值需要自行填写，保存时请留意是否要覆盖已有值。
 
-应用引用包含插件运行期 ID、进程启动时间、PID 和窗口句柄。进程重启、窗口变化或 DSH 重启后需要重新 `@`。这只限制本插件的路由目标，**不是第三方 MCP/CLI 的操作系统沙箱**；连接器本身仍可能具有文件、网络或其他程序访问权。
+应用引用包含插件运行期 ID、进程启动时间、PID 和窗口句柄。MCP/CLI 在窗口关闭后仍可使用该引用；桌面读取可按同一可执行路径重新绑定唯一窗口，或启动一次程序并等候窗口出现。多个候选窗口需要重新选择，DSH 重启后引用失效。这只限制本插件的路由目标，**不是第三方 MCP/CLI 的操作系统沙箱**；连接器本身仍可能具有文件、网络或其他程序访问权。
 
 ## Unity 注意事项
 
@@ -98,7 +98,7 @@ MCP 支持 stdio 和 Streamable HTTP。非本机远程接口要求 HTTPS；本�
 
 `app_call.limit` 限制 CLI 的 stdout、stderr 合计正文，MCP 的文本与结构化正文共用预算，相同 JSON 只返回一份。桌面批处理按整批 `limit` 均分正文预算，预算用尽后不再输出空文本块。状态、步骤及图片路径等元数据另计；字符预算不等于模型实际计费 token 数。
 
-窗口列表缓存 2.5 秒，并发枚举合并为一次；真正发送输入前仍重新校验窗口及进程身份。窗口关闭或引用失效时返回 `window_unavailable`、`stop: true`、`retryable: false`，请先打开窗口再重新 `@`，不要继续找窗口或换驱动重试。MCP Registry 与 npm CLI 发现并发执行，不再串行等待两个网络超时。默认控件读取超时 8 秒，整组输入超时 15 秒，可用 `timeout` 调整到最多 30 秒。
+窗口列表缓存 2.5 秒，并发枚举合并为一次；真正发送输入前仍重新校验窗口及进程身份。MCP/CLI 调用不依赖窗口存活。桌面读取会恢复同路径的唯一窗口，或后台发起一次启动并有限等待；启动失败时返回具体诊断，可用 computer use 检查启动过程，不反复要求手动开窗。新窗口必须重新读取，旧快照不能用于输入。已安装程序目录缓存 60 秒。MCP Registry 与 npm CLI 发现并发执行，不再串行等待两个网络超时。默认控件读取超时 8 秒，整组输入超时 15 秒，可用 `timeout` 调整到最多 30 秒。
 
 <details>
 <summary>模型工具参数示例：读取一次画面，再点击并拖拽</summary>
@@ -138,11 +138,11 @@ MCP、CLI 或桌面操作超时后，可能已经发生修改。插件记录不�
 
 ## English
 
-Version `0.1.2` supports installation from npm as `dsh-doyourweb`, or from a locally built project directory. Fully exit DSH from the system tray, restart it, and reload the Chrome/Edge extension after an upgrade. Do not run two plugin copies on the same port. `/apps` opens the local manager; `/browser` remains the pairing entry.
+Version `0.1.3` supports installation from npm as `dsh-doyourweb`, or from a locally built project directory. Fully exit DSH from the system tray, restart it, and reload the Chrome/Edge extension after an upgrade. Do not run two plugin copies on the same port. `/apps` opens the local manager; `/browser` remains the pairing entry.
 
-**Annotations:** open the target DSH conversation, then choose “批注当前页面” in the extension popup or “批注” on a controlled page. Pick an element, write a comment and click “添加到会话”. It becomes a queued user message in the conversation named on the toolbar, with an optional cropped image attachment; no separate annotation files or `@` library are kept. DSH retains the normal message and attachment. Multiple distinct open DSH conversations require an explicit `browser_annotate` call from the destination conversation. Metadata includes URL, selector, selected computed styles, visible text and bounds, not input values. It is historical context, not a source-code mapping. Cross-origin frame selection and document-root Shadow DOM selectors are limited. Idle detach removes the toolbar and retains an unsent comment draft only in the original page. Image attachments require an image-capable model; delivery errors retain the comment.
+**Annotations:** open the target DSH conversation, then choose “批注当前页面” in the extension popup or “批注” on a controlled page. Pick an element, write a comment and press Enter or click “加入聊天草稿”. It appends to the target chat draft with an optional cropped image. Drag the toolbar and collect multiple annotations; press Enter in chat to send them together. Shift+Enter inserts a newline; no separate annotation files or `@` library are kept. DSH retains the normal message and attachment. Multiple distinct open DSH conversations require an explicit `browser_annotate` call from the destination conversation. Metadata includes URL, selector, selected computed styles, visible text and bounds, not input values. It is historical context, not a source-code mapping. Cross-origin frame selection and document-root Shadow DOM selectors are limited. Idle detach removes the toolbar and retains an unsent comment draft only in the original page. Image attachments require an image-capable model; delivery errors retain the comment.
 
-**Apps:** `@` lists visible Windows application windows backed by an `.exe`, excluding tray, input-method, shell and helper surfaces. Minimized apps and multiple windows are retained, with the foreground window first; executable names such as `Unity.exe` are searchable. Files, folders and conversations each show three previews with expand/collapse controls; keyword searches and individual folder navigation remain unabridged. `app_discover` checks known official connectors, the public MCP Registry and npm CLI index. Choose a connector that actually covers the task, not merely one that exists. The sources are independent and cached; no result means “not discovered”, not “unsupported”. Source research can produce a proposed MCP/CLI configuration for `app_connect`, or a human can edit it locally. Proposed sources remain unverified/community.
+**Apps:** `@` lists visible Windows application windows and installed Start Menu shortcuts with an executable target. Closed apps are marked for on-demand launch. Store apps and shortcuts without an executable target are not included. Tray, input-method, shell and helper windows are excluded. Minimized apps and multiple windows are retained, with the foreground window first; executable names such as `Unity.exe` are searchable. Files, folders and conversations each show three previews with expand/collapse controls; keyword searches and individual folder navigation remain unabridged. `app_discover` checks known official connectors, the public MCP Registry and npm CLI index. Choose a connector that actually covers the task, not merely one that exists. The sources are independent and cached; no result means “not discovered”, not “unsupported”. Source research can produce a proposed MCP/CLI configuration for `app_connect`, or a human can edit it locally. Proposed sources remain unverified/community.
 
 **File visibility:** native reference groups appear before browser/app lists. Bare `@` retains a file-search entry even without current file candidates; `@文件`/`@files` opens the file category. If the local provider's directory-first limit excludes every file, the plugin backfills visible files from the same workspace root within the existing result budget. It does not read file contents, recursively scan, or supplement hidden files. Keyword/path queries and native reference insertion remain unchanged.
 
@@ -150,8 +150,8 @@ Version `0.1.2` supports installation from npm as `dsh-doyourweb`, or from a loc
 
 Disabling installation prompts only bypasses repeat-install approval for an unchanged, previously reviewed connector whose publisher is in the local trust list. It does not approve new sources, desktop connections, foreground actions or OS elevation. Configuration changes close old connections, cancel pending installation/handshake requests and require fresh approval. The manager can revoke a connector. Credentials are stored locally and not echoed in lists; never paste secrets into chat. Remote OAuth is not implemented; configure supported server credentials locally.
 
-**Desktop fallback:** `app_desktop` uses official Cua Driver MCP, the upstream used by DSH's experimental computer-use integration. It does not invoke Codex's private tools or assume a desktop provider exists. Default reads request a bounded control tree without images; `screenshot:true` opts into visual grounding, optionally with `arguments.include_accessibility_tree:false` for canvas work. `app_mouse` supports up to 8 known-target clicks, double/right clicks, scrolls or drags from one fresh visual snapshot. Coordinates are window-local image pixels. Batches validate before execution, stop at failure and report completed steps; no automatic screenshots follow inputs. Background input is the default; foreground input asks once per batch. Snapshots expire after 90 seconds and are consumed per input/batch. Short repeated reads are cached, unchanged polling returns `no_progress`, and missing windows return `window_unavailable`, all with `stop:true` and no automatic retries. Window enumeration is cached/single-flight but identity is rechecked before dispatch. MCP/CLI discovery requests overlap. Defaults are 8 seconds per read and 15 seconds per input batch, adjustable via `timeout` up to 30 seconds. Uncertain effects block mutations until a successful inspection; never repeat an action through another channel. Images become local files and, where available, DSH image attachments. The model must support images for pixel inspection.
+**Desktop fallback:** `app_desktop` uses official Cua Driver MCP, the upstream used by DSH's experimental computer-use integration. It does not invoke Codex's private tools or assume a desktop provider exists. Default reads request a bounded control tree without images; `screenshot:true` opts into visual grounding, optionally with `arguments.include_accessibility_tree:false` for canvas work. `app_mouse` supports up to 8 known-target clicks, double/right clicks, scrolls or drags from one fresh visual snapshot. Coordinates are window-local image pixels. Batches validate before execution, stop at failure and report completed steps; no automatic screenshots follow inputs. Background input is the default; foreground input asks once per batch. Snapshots expire after 90 seconds and are consumed per input/batch. Short repeated reads are cached, unchanged polling returns `no_progress`, while desktop reads can reconnect a unique window at the selected executable path or launch that app once with a bounded wait. Launch failures include diagnostics for computer-use inspection; ambiguous windows require selection. Input requires a new snapshot after reopening. Window enumeration is cached/single-flight but identity is rechecked before dispatch. MCP/CLI discovery requests overlap. Defaults are 8 seconds per read and 15 seconds per input batch, adjustable via `timeout` up to 30 seconds. Uncertain effects block mutations until a successful inspection; never repeat an action through another channel. Images become local files and, where available, DSH image attachments. The model must support images for pixel inspection.
 
-Windows app references are invalid after process/window identity changes or plugin restart. This scopes routing, not the third-party connector's OS privileges: MCP servers and CLIs are not sandboxed to the selected application. Unity additionally requires compatible editor/project integration such as Unity Pipeline; installing its CLI alone does not configure the project.
+Background MCP/CLI connections keep working without a visible window. Desktop reads can rebind the selected executable, but snapshots are tied to the current process/window identity. References expire on plugin restart. This scopes routing, not the third-party connector's OS privileges: MCP servers and CLIs are not sandboxed to the selected application. Unity additionally requires compatible editor/project integration such as Unity Pipeline; installing its CLI alone does not configure the project.
 
 Validation uses unit tests, a real stdio MCP fixture, disposable Chromium extension/CDP tests, responsive annotation/management screenshots and the installed DSH Remote contract. Real desktop applications, user browser profiles and third-party installations were not exercised. Browser support remains Chromium-based Chrome/Edge; app inventory is Windows-only.

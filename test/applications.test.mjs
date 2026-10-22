@@ -269,15 +269,56 @@ test("desktop defaults to bounded text-only reads and stops identical read-only 
   assert.notEqual(fresh.snapshot, first.snapshot); assert.equal(calls.length, 2);
 });
 
-test("desktop reports a closed window once without screenshots, installs or repeated lookup", async t => {
+test("desktop attempts one bounded automatic launch and never repeats inputs or launch on failure", async t => {
   const { service, app, exec, calls } = await desktopFixture(t);
-  let scans = 0;
+  let scans = 0, launches = 0;
+  service.inventory.launch = async () => { launches++; };
+  service.inventory.wait = async () => {};
   service.inventory.inventory = async () => { scans++; return []; };
   const result = await service.desktop(app.ref, {}, exec);
   assert.equal(result.status, "window_unavailable"); assert.equal(result.stop, true); assert.equal(result.retryable, false);
   assert.equal(calls.length, 0);
   await service.desktop(app.ref, {}, exec);
-  assert.equal(scans, 1);
+  assert.equal(scans, 10); assert.equal(launches, 1);
+});
+
+test("background CLI stays usable after the selected window closes", async t => {
+  const { service, app } = await fixture(t, { run: async () => ({ stdout: "background success", exitCode: 0 }) });
+  service.inventory.inventory = async () => [];
+  await service.inventory.list("", undefined, true);
+  const pending = await service.connect(app.ref, "fixture-cli", { session: "s" });
+  const connected = await service.approve(pending.plan);
+  const result = await service.call(app.ref, { connection: connected.connection, argv: ["status"] }, { session: "s" });
+  assert.equal(result.result.stdout, "background success");
+});
+
+test("desktop launches a closed selected app, reads its new window, and rejects old snapshots", async t => {
+  const { service, app, row, exec, calls } = await desktopFixture(t);
+  const previous = await service.desktop(app.ref, {}, exec);
+  let rows = [], launches = 0;
+  service.inventory.inventory = async () => rows;
+  service.inventory.wait = async () => {};
+  service.inventory.launch = async selected => { assert.equal(selected.path, row.path); launches++; rows = [{ ...row, pid: 43, windowId: "456", started: "2" }]; };
+  const result = await service.desktop(app.ref, {}, exec);
+  assert.equal(launches, 1); assert.notEqual(result.snapshot, previous.snapshot);
+  assert.equal(calls.at(-1).args.pid, 43); assert.equal(calls.at(-1).args.window_id, 456);
+  await assert.rejects(service.desktop(app.ref, { tool: "click", snapshot: previous.snapshot }, exec), /fresh desktop snapshot/);
+  await service.desktop(app.ref, { tool: "click", snapshot: result.snapshot }, exec);
+  assert.equal(calls.at(-1).args.delivery_mode, "background");
+});
+
+test("an installed app is selectable before launch and ambiguous replacement windows are not guessed", async () => {
+  const row = { name: "Fixture", title: "Fixture", path: "C:\\Apps\\Fixture.exe", installed: true };
+  let rows = [row], launches = 0;
+  const inventory = new AppInventory({ inventory: async () => rows, wait: async () => {}, launch: async () => {
+    launches++; rows = [{ ...row, pid: 1, started: "1", windowId: "2" }];
+  } });
+  const [app] = await inventory.list();
+  assert.equal((await inventory.resolve(app.ref, undefined, { window: false })).installed, true);
+  const opened = await inventory.ensureWindow(app.ref); assert.equal(opened.pid, 1); assert.equal(launches, 1);
+  rows = [{ ...row, pid: 2, started: "2", windowId: "3" }, { ...row, pid: 2, started: "2", windowId: "4" }];
+  await assert.rejects(inventory.ensureWindow(app.ref), /Several windows/);
+  assert.equal(launches, 1);
 });
 
 test("mouse clicks and drags share one visual snapshot and stop without automatic captures", async t => {
@@ -422,7 +463,7 @@ test("annotations go straight to a conversation with no plugin files or annotati
   const page = { url: () => value.url, screenshot: async options => { assert.equal(options.path, undefined); return Buffer.from("image bytes"); } };
   const target = { sessionId: "conversation-1", title: "Frontend" };
   const result = await notes.send("dsh-browser://fixture/1", page, { ...value, screenshot: true }, target);
-  assert.equal(result.accepted, true); assert.equal(requests[0].sessionId, "conversation-1"); assert.equal(requests[0].mode, "queue");
+  assert.equal(result.accepted, true); assert.equal(requests[0].sessionId, "conversation-1"); assert.equal(requests[0].mode, "draft");
   assert.match(requests[0].content[0].text, /Make button green/); assert.match(requests[0].content[0].text, /#save/);
   assert.equal(requests[0].content[1].type, "image"); assert.equal(requests[0].content[1].mediaType, "image/png");
   assert.deepEqual(await readdir(home), before); assert.equal(notes.items, undefined); assert.equal(notes.load, undefined);

@@ -91,8 +91,8 @@ const invocations = [
     result: result("browserTabs/focus", { ok: "boolean" }) },
   { method: "apps", parameters: request("browserTabs/apps", { query: "string" }),
     result: result("browserTabs/apps", { apps: "array", error: "string" }) },
-  { method: "annotationSession", parameters: request("browserTabs/annotationSession", { client: "string", revision: "number", sessionId: "string", title: "string", active: "boolean" }),
-    result: result("browserTabs/annotationSession", { ok: "boolean" }) },
+  { method: "annotationSession", parameters: request("browserTabs/annotationSession", { client: "string", revision: "number", sessionId: "string", title: "string", active: "boolean", acknowledgements: "array" }),
+    result: result("browserTabs/annotationSession", { ok: "boolean", drafts: "array" }) },
   { method: "manage", parameters: request("browserTabs/manage", {}),
     result: result("browserTabs/manage", { url: "string" }) },
 ];

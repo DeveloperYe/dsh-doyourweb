@@ -2,7 +2,7 @@
 
 让 DeepSeek Harness 引用并操作你已经打开、保持登录的 Chrome 和 Edge 页面，用精简的页面上下文和批量操作减少重复读取。
 
-`0.1.2` 新增页面元素批注和 `@` Windows 应用。批注可直接发送到当前会话；应用控制按任务选择官方 MCP/CLI、社区连接器，再回退到桌面操作。首次连接和安装需要确认，详见[批注与应用控制](docs/annotations-and-apps.md)。
+`0.1.3` 新增页面元素批注和 `@` Windows 应用。批注先加入聊天草稿，可积累多条后按 Enter 发送；应用控制按任务选择官方 MCP/CLI、社区连接器，再回退到桌面操作。首次连接和安装需要确认，详见[批注与应用控制](docs/annotations-and-apps.md)。
 
 [![CI](https://img.shields.io/github/actions/workflow/status/SheepofSheep/dsh-doyourweb/ci.yml?branch=main&label=CI)](https://github.com/SheepofSheep/dsh-doyourweb/actions/workflows/ci.yml)
 [![License](https://img.shields.io/badge/license-MIT-green)](LICENSE)
@@ -25,7 +25,7 @@
 
 项目由 DSH 插件和配套的 Manifest V3 浏览器扩展组成。插件接入原生 `@`、`/` 菜单，扩展提供标签页信息和控制通道。完成一次配对后，扩展会在后台重连，不必一直打开弹窗。
 
-当前版本为 **0.1.2**，包和浏览器扩展版本一致，变更见[更新记录](CHANGELOG.md)。
+当前版本为 **0.1.3**，包和浏览器扩展版本一致，变更见[更新记录](CHANGELOG.md)。
 
 ## 02 · 功能预览
 
@@ -53,11 +53,11 @@
 | 简短回执 | `observe: "summary"` 跳过下一次页面快照；动作结果有 1,600 字符输出预算。 |
 | 页面截图 | 将 PNG 保存到本地，返回文件路径，不把 base64 塞进文本上下文。 |
 | 后台连接 | 保存配对配置、自动重连，并在空闲时释放调试连接。 |
-| 元素批注 | 页面右上角“批注”选择元素，将说明、CSS 选择器、样式、位置和可选局部截图直接添加到当前会话，不另建批注库。 |
-| 应用引用 | `@` 搜索运行中的 Windows 应用窗口，显示程序图标，用进程启动时间和窗口句柄防止旧引用误控新进程。 |
+| 元素批注 | 页面右上角“批注”选择元素，将说明、CSS 选择器、样式、位置和可选局部截图追加到聊天草稿；浮窗可拖动，多条批注一起发送。 |
+| 应用引用 | `@` 搜索运行中的 Windows 窗口和开始菜单中的已安装程序，显示程序图标，用进程启动时间和窗口句柄防止旧引用误控新进程。 |
 | MCP / CLI | 优先已知官方接口，查询 MCP Registry 和 npm CLI；支持本机 stdio、Streamable HTTP、自定义连接器和有来源的配置提议。 |
 | 安装确认 | DSH 原生提问或 `/apps` 本地页面批准安装；固定包版本，npm 禁用安装脚本，关闭重复询问仅限已审阅和信任的来源。 |
-| 桌面回退 | 使用 Cua Driver MCP，默认只读有限控件树、按需截图；复用窗口检查，窗口关闭或反复读取时明确停止。 |
+| 桌面回退 | 使用 Cua Driver MCP，默认只读有限控件树、按需截图；后台优先，桌面读取可自动启动所选程序，反复读取无变化时停止。 |
 | 鼠标操作 | `app_mouse` 支持点击、双击、右键、滚动和拖拽，一次画面读取最多执行 8 个已知目标动作；前台操作单独确认。 |
 
 浏览器输出预算按 JavaScript 字符计算，包含 JSON 转义和元数据；应用工具的 `limit` 限制正文，状态、步骤和图片路径等元数据另计。MCP 不重复返回相同 JSON，CLI 的 stdout 与 stderr 共用正文预算。字符数不等于模型 token 数，输出预算也不限制 DOM 遍历耗时。
@@ -128,7 +128,7 @@ dsh-doyourweb
 ### 构建并安装本地版本
 
 ```sh
-git clone --branch ver0.1.2 https://github.com/SheepofSheep/dsh-doyourweb.git
+git clone --branch ver0.1.3 https://github.com/SheepofSheep/dsh-doyourweb.git
 cd dsh-doyourweb
 npm ci
 npm run build
@@ -181,10 +181,10 @@ npm run build
 
 安装或升级插件后，从托盘完全退出、重启 DSH，并重新加载浏览器扩展。本地开发时，先构建项目，再在 DSH 安装项目的绝对路径。不要同时启用 npm 版和本地版，以免占用同一端口。
 
-- **批注**：打开扩展弹窗，点“批注当前页面”，或者引用页面后让 DSH 开启批注。点选元素、填写说明，点“添加到会话”，批注便作为用户消息排入工具条所示会话，可附局部截图。不再保存独立批注文件或维护批注库。受控页面右上角也会显示批注按钮。
-- **应用**：输入 `@Unity` 或其他运行中的程序名，选中窗口后描述任务。AI 先用 `app_discover` 查连接器，再用 `app_connect` 请求连接或安装，最后通过 `app_call` 调用。目录未收录的连接器可凭官方文档或仓库提出配置，同样需要你确认。
+- **批注**：打开扩展弹窗，点“批注当前页面”，或者引用页面后让 DSH 开启批注。点选元素、填写说明，按 Enter 或点“加入聊天草稿”，说明和局部截图会追加到工具条所示会话的输入框。可拖动浮窗、连续添加多条批注，回到聊天后按 Enter 一起发送；Shift+Enter 换行。不再保存独立批注文件或维护批注库。受控页面右上角也会显示批注按钮。
+- **应用**：输入 `@Unity` 或其他运行中、已安装的程序名，选中窗口后描述任务。AI 先用 `app_discover` 查连接器，再用 `app_connect` 请求连接或安装，最后通过 `app_call` 调用。目录未收录的连接器可凭官方文档或仓库提出配置，同样需要你确认。
 - **管理**：输入 `/apps` 打开本地“应用管理”，批准请求、配置连接器和安装策略，不用一直开着。`@` 中的文件、文件夹和对话分别显示 3 条预览，可展开或收起；单个文件夹仍可进入目录。
-- **回退**：结构化接口不适合当前任务时才调用 `app_desktop`。默认读取有限控件树、不截图；需要画面时才传 `screenshot: true`，再用 `app_mouse` 批量点击、滚动或拖拽，最多 8 步，中间不自动截图。窗口关闭、反复读取会返回 `stop: true`。使用 DSH computer-use 同源的 Cua Driver，不会绕过系统权限。
+- **回退**：结构化接口不适合当前任务时才调用 `app_desktop`。默认读取有限控件树、不截图；需要画面时才传 `screenshot: true`，再用 `app_mouse` 批量点击、滚动或拖拽，最多 8 步，中间不自动截图。MCP/CLI 不要求窗口打开；桌面读取会尝试启动所选程序，重新读取后才能操作。启动失败可交由 computer use 检查，反复读取无变化会返回 `stop: true`。使用 DSH computer-use 同源的 Cua Driver，不会绕过系统权限。
 
 详见[安装策略、Unity 配置和已知限制](docs/annotations-and-apps.md)。
 
@@ -272,7 +272,7 @@ CI 配置了 Windows、Linux 单元测试，以及 Linux 上隔离的无头 Chro
 
 ### Roadmap
 
-`0.1.2` 包含页面批注、应用引用和 MCP/CLI 优先的应用控制。后续重点是更多应用的实机兼容验证与连接器配置体验，暂未公布交付时间。问题反馈和功能讨论见 [Issues](https://github.com/SheepofSheep/dsh-doyourweb/issues)。
+`0.1.3` 包含页面批注、应用引用和 MCP/CLI 优先的应用控制。后续重点是更多应用的实机兼容验证与连接器配置体验，暂未公布交付时间。问题反馈和功能讨论见 [Issues](https://github.com/SheepofSheep/dsh-doyourweb/issues)。
 
 ### FAQ
 

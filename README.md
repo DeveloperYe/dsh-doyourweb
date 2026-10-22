@@ -2,6 +2,8 @@
 
 Reference and control your existing, logged-in Chrome and Edge tabs from DeepSeek Harness, with compact page context and batched browser actions.
 
+Version `0.1.2` adds element annotations sent directly to the current conversation and `@` references to running Windows apps. App control prefers a task-matching official MCP/CLI, then reviewed community connectors, with desktop control as the fallback. First connections and installations require confirmation. See [annotations and app control](docs/annotations-and-apps.md#english).
+
 [![CI](https://img.shields.io/github/actions/workflow/status/SheepofSheep/dsh-doyourweb/ci.yml?branch=main&label=CI)](https://github.com/SheepofSheep/dsh-doyourweb/actions/workflows/ci.yml)
 [![License](https://img.shields.io/badge/license-MIT-green)](LICENSE)
 [![Node.js](https://img.shields.io/badge/Node.js-%3E%3D22-339933)](package.json)
@@ -23,7 +25,7 @@ Browser tasks often depend on pages you have already opened and accounts you hav
 
 The project has two parts: a DSH plugin and a companion Manifest V3 extension. The plugin adds browser references to the native `@` and `/` menus; the extension supplies tab metadata and browser control. Once paired, the extension reconnects in the background without keeping its popup open.
 
-Current version: **ver0.1.1**. The package and browser extension use the numeric version `0.1.1`.
+Current version: **0.1.2** for both the package and browser extension. See the [changelog](CHANGELOG.md).
 
 ## 02 · Preview
 
@@ -51,8 +53,14 @@ There is no public hosted demo. After the DSH plugin starts, its default local c
 | Short receipts | `observe: "summary"` skips the next page snapshot. Action results have a 1,600-character output budget. |
 | Screenshots | Saves PNG files locally and returns their paths instead of embedding base64. |
 | Background connection | Saves pairing settings, reconnects automatically, and releases idle debugger connections. |
+| Element annotations | Pick an element and send a comment, selector, styles, bounds and optional cropped screenshot directly to the current conversation. No separate annotation library. |
+| Running apps | Search visible Windows application windows with `@`, with cached program icons. References include process lifetime and window identity. |
+| MCP / CLI | Known official connectors, MCP Registry and npm CLI discovery, stdio / Streamable HTTP, and reviewed custom configurations. |
+| Installation approval | Native DSH questions or a local `/apps` page; exact package versions and npm lifecycle scripts disabled. Optional repeat-install bypass is restricted to reviewed, trusted sources. |
+| Desktop fallback | Cua Driver MCP, bounded text-only reads by default, on-demand images, cached checks and explicit stops for closed windows or repeated polling. |
+| Mouse input | `app_mouse` batches up to 8 clicks, double/right clicks, scrolls and drags from one visual snapshot; separate foreground approval. |
 
-Budgets count JavaScript characters, including JSON escaping and metadata, not model tokens. They limit returned context, not DOM traversal time. The project does not claim a measured token-saving percentage or a speed ranking.
+Browser budgets count JavaScript characters, including JSON escaping and metadata. App tool `limit` values bound body text; status, steps and image-path metadata are additional. MCP results omit duplicate JSON, and CLI stdout/stderr share one body budget. Character counts are not model tokens, and output budgets do not limit DOM traversal time.
 
 ### WebMCP-First Control (Experimental)
 
@@ -68,6 +76,7 @@ Version `0.1.1` checks for page-provided WebMCP tools before collecting a DOM sn
 | Site tools | `document.modelContext`, Ajv 8.20.0 argument validation |
 | Local bridge | WebSocket (`ws`), Zod validation |
 | Browser extension | Manifest V3, `chrome.tabs`, `chrome.debugger` |
+| App connectors | Official MCP SDK 1.32.1, stdio / Streamable HTTP, literal CLI argument arrays |
 | Build and checks | esbuild, Node.js test runner, GitHub Actions |
 
 ```mermaid
@@ -89,6 +98,9 @@ flowchart LR
     Bridge <-->|"Origin check and pairing token"| Extension
     Extension <-->|"Tab inventory and debugger"| Tabs
     Engine -->|"Snapshots, receipts, PNG paths"| Host
+    Host --> Apps["App discovery and human approval"]
+    Apps --> Structured["Official / community MCP and CLI"]
+    Apps --> Desktop["Cua Driver desktop fallback"]
 ```
 
 Only tabs referenced by the user in the current conversation are available to the model's browser tools. Page content is treated as untrusted data, not instructions or permission.
@@ -116,7 +128,7 @@ This requires a published package. If the registry returns `404`, use the local 
 ### Build and Install Locally
 
 ```sh
-git clone --branch ver0.1.1 https://github.com/SheepofSheep/dsh-doyourweb.git
+git clone --branch ver0.1.2 https://github.com/SheepofSheep/dsh-doyourweb.git
 cd dsh-doyourweb
 npm ci
 npm run build
@@ -165,6 +177,17 @@ After referencing a page, you can ask:
 
 When multiple tabs are authorized, pass the selected tab's reference as `tab`.
 
+### Annotations and App Control
+
+After installing or upgrading, fully exit DSH from the system tray, restart it, and reload the browser extension. For local development, build this working tree and install its absolute directory path. Do not enable the npm copy and local copy on the same port.
+
+- **Annotations:** choose “批注当前页面” in the extension popup, or ask DSH to enable annotations on a referenced tab. Pick an element, write a comment, then click “添加到会话”. The annotation becomes a queued user message in the conversation shown on the toolbar, with an optional image attachment. The plugin keeps no annotation files or library. Controlled pages also show a top-right annotation button.
+- **Apps:** select a running application with `@Unity` or another program name. DSH discovers connectors with `app_discover`, requests connection/installation through `app_connect`, then invokes MCP tools or CLI arguments with `app_call`. A connector found outside discovery can be proposed with its source documentation for human review.
+- **Management:** `/apps` opens the local application, connector and approval manager. It need not remain open. Files, folders and conversations in `@` each show three previews with expand/collapse controls; individual folders retain native navigation.
+- **Fallback:** `app_desktop` uses upstream Cua Driver when structured tools cannot cover the task. Default reads return bounded controls without screenshots. Use `screenshot: true` only for visual grounding; `app_mouse` then supports up to 8 known-target clicks, scrolls or drags without intermediate captures. Missing windows and repeated inspections return `stop: true`. It does not bypass OS permissions.
+
+See [installation policy, Unity requirements and limitations](docs/annotations-and-apps.md#english).
+
 <details>
 <summary>Tool example: read a page, then extract a short result list</summary>
 
@@ -208,6 +231,9 @@ src/
   client-entry.js    React UI and icons
   bridge.js          Pairing, extension connection and CDP relay
   engine.js          Snapshots, actions, extraction and screenshots
+  annotations.js     Isolated element picker and direct conversation delivery
+  apps/              App inventory, discovery, approval, installation and execution
+  manage.js          Local application and connector management UI
   webmcp.js          Site-tool discovery, routing, validation and calls
   grants.js          Conversation-scoped tab authorization
   protocol.js        Tab references and Remote RPC descriptors
@@ -246,7 +272,7 @@ CI is configured for unit tests on Windows and Linux, plus isolated headless Chr
 
 ### Roadmap
 
-This README describes the implemented `0.1.1` release. No delivery schedule for later versions is announced. Report bugs and discuss changes in [Issues](https://github.com/SheepofSheep/dsh-doyourweb/issues).
+Version `0.1.2` includes page annotations, app references and MCP/CLI-first app control. Further work focuses on real-application compatibility and connector configuration. No release date is promised. Report bugs and discuss changes in [Issues](https://github.com/SheepofSheep/dsh-doyourweb/issues).
 
 ### FAQ
 

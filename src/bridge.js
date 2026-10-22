@@ -9,6 +9,7 @@ import { chromium } from "playwright-core";
 import { BrowserModel } from "./vendor/browser-model.js";
 import { extensionId, Pairings, pinnedExtensionId } from "./pairing.js";
 import { canControl, parseRef, tabRef } from "./protocol.js";
+import { managementPage } from "./manage.js";
 
 export { extensionId } from "./pairing.js";
 
@@ -129,8 +130,15 @@ export class BrowserBridge extends EventEmitter {
   handleHttp(request, response) {
     if (request.headers.host !== `127.0.0.1:${this.port}`) { response.writeHead(403).end(); return; }
     const pathname = new URL(request.url, "http://127.0.0.1").pathname;
+    if (pathname === "/manage/api" && request.method === "POST") return this.handleManagement(request, response);
     if (request.method === "POST" && pathname === "/setup/pair") return this.handlePairPost(request, response);
     if (request.method !== "GET") { response.writeHead(405).end(); return; }
+    if (pathname === "/manage") {
+      const { html, nonce } = managementPage(this.setupKey);
+      response.writeHead(200, { "Content-Type": "text/html; charset=utf-8", "Cache-Control": "no-store", "Referrer-Policy": "no-referrer",
+        "Content-Security-Policy": `default-src 'none'; connect-src 'self'; style-src 'unsafe-inline'; script-src 'nonce-${nonce}'; base-uri 'none'; frame-ancestors 'none'` });
+      response.end(html); return;
+    }
     if (pathname !== "/setup") { response.writeHead(404).end(); return; }
     // The CSP nonce is minted per response: the only script the page may run is the
     // one behind the copy buttons, because a browser refuses web-page navigation to
@@ -139,6 +147,26 @@ export class BrowserBridge extends EventEmitter {
     response.writeHead(200, { "Content-Type": "text/html; charset=utf-8", "Cache-Control": "no-store",
       "Content-Security-Policy": `default-src 'none'; style-src 'unsafe-inline'; script-src 'nonce-${nonce}'; base-uri 'none'; frame-ancestors 'none'` });
     response.end(this.setupPage(nonce));
+  }
+
+  handleManagement(request, response) {
+    const origin = `http://127.0.0.1:${this.port}`;
+    if (!sameSecret(request.headers["x-dsh-key"], this.setupKey)
+      || (request.headers.origin && request.headers.origin !== origin)
+      || (request.headers["sec-fetch-site"] && request.headers["sec-fetch-site"] !== "same-origin")
+      || request.headers["content-type"]?.split(";")[0] !== "application/json") { response.writeHead(403).end(); return; }
+    let body = "", oversized = false;
+    request.on("data", chunk => { body += chunk; if (Buffer.byteLength(body) > 65536) { oversized = true; response.writeHead(413).end(); request.destroy(); } });
+    request.on("end", async () => {
+      if (oversized) return;
+      try {
+        if (!this.management) throw new Error("Management service is not ready");
+        const result = await this.management(JSON.parse(body));
+        response.writeHead(200, { "Content-Type": "application/json", "Cache-Control": "no-store" }).end(JSON.stringify(result));
+      } catch (error) {
+        if (!response.headersSent) response.writeHead(400, { "Content-Type": "application/json", "Cache-Control": "no-store" }).end(JSON.stringify({ error: error.message }));
+      }
+    });
   }
 
   setupPage(nonce) {
@@ -240,6 +268,9 @@ export class BrowserBridge extends EventEmitter {
           for (const relay of [...this.relays.values()]) {
             if (relay.profile === profile && !profile.tabs.has(relay.tabId)) void this.dropRelay(relay);
           }
+        } else if (profile && data.method === "dsh.annotation.start") {
+          const selected = profile.tabs.get(data.params?.tabId);
+          if (selected) this.emit("annotation", selected.ref);
         } else if (data.id && this.pending.has(data.id)) {
           const pending = this.pending.get(data.id);
           if (pending.ws !== ws) throw new Error("Wrong connection for response");
@@ -247,6 +278,7 @@ export class BrowserBridge extends EventEmitter {
           data.error ? pending.reject(new Error(data.error)) : pending.resolve(data.result);
         } else if (profile && data.method === "chrome.debugger.onEvent") {
           const [source, method, params] = data.params;
+          this.emit("debuggerEvent", profile, source, method, params);
           for (const relay of this.relays.values()) {
             if (relay.profile === profile && relay.tabId === source.tabId) relay.model.onDebuggerEvent(source, method, params);
           }
@@ -304,16 +336,29 @@ export class BrowserBridge extends EventEmitter {
     this.relays.set(pathname, relay);
     relay.ready = chromium.connectOverCDP(`ws://127.0.0.1:${this.port}${pathname}`, {
       headers: { Authorization: `Bearer ${this.settings.token}` }, timeout: 15000,
-    }).then(browser => {
+    }).then(async browser => {
       relay.browser = browser;
       browser.on("disconnected", () => this.dropRelay(relay));
       const page = browser.contexts()[0]?.pages()[0];
       if (!page) throw new Error("Browser did not expose the referenced tab");
       page.setDefaultTimeout(8000);
       page.setDefaultNavigationTimeout(12000);
+      await this.decoratePage?.(ref, page);
       return page;
     }).catch(error => { this.dropRelay(relay); throw error; });
     return relay.ready;
+  }
+
+  cdp(ref) {
+    const { profile, tabId } = this.resolve(ref);
+    const session = new EventEmitter();
+    const receive = (owner, source, method, params) => {
+      if (owner === profile && source.tabId === tabId && !source.sessionId) session.emit(method, params);
+    };
+    this.on("debuggerEvent", receive);
+    session.send = (method, params) => this.request(profile, "chrome.debugger.sendCommand", [{ tabId }, method, params]);
+    session.detach = async () => { this.off("debuggerEvent", receive); };
+    return session;
   }
 
   acceptCDP(relay, ws) {
@@ -340,11 +385,14 @@ export class BrowserBridge extends EventEmitter {
     if (!this.relays.delete(relay.pathname)) return this.detachments.get(relay.ref);
     clearTimeout(relay.idleTimer);
     this.emit("release", relay.ref);
-    relay.ws?.close();
-    const closing = relay.browser?.close().catch(() => {});
-    const detached = relay.profile.ws.readyState === WebSocket.OPEN
-      ? this.request(relay.profile, "chrome.debugger.detach", [{ tabId: relay.tabId }]).catch(() => {}) : undefined;
-    const cleanup = Promise.all([closing, detached]).finally(() => {
+    const cleanup = (async () => {
+      try { await this.beforeRelease?.(relay.ref); } catch { /* Detach must finish even if a page has already gone away. */ }
+      relay.ws?.close();
+      const closing = relay.browser?.close().catch(() => {});
+      const detached = relay.profile.ws.readyState === WebSocket.OPEN
+        ? this.request(relay.profile, "chrome.debugger.detach", [{ tabId: relay.tabId }]).catch(() => {}) : undefined;
+      await Promise.all([closing, detached]);
+    })().finally(() => {
       if (this.detachments.get(relay.ref) === cleanup) this.detachments.delete(relay.ref);
     });
     this.detachments.set(relay.ref, cleanup);
@@ -371,6 +419,10 @@ export class BrowserBridge extends EventEmitter {
     for (const pending of this.pending.values()) { clearTimeout(pending.timer); pending.reject(new Error("Bridge stopped")); }
     this.pending.clear();
     this.ws?.close();
-    if (this.server?.listening) await new Promise(resolve => this.server.close(resolve));
+    if (this.server?.listening) await new Promise(resolve => {
+      this.server.close(resolve);
+      // Management-page fetch connections must not keep plugin unload waiting.
+      this.server.closeAllConnections();
+    });
   }
 }

@@ -2,6 +2,8 @@
 
 让 DeepSeek Harness 引用并操作你已经打开、保持登录的 Chrome 和 Edge 页面，用精简的页面上下文和批量操作减少重复读取。
 
+`0.1.2` 新增页面元素批注和 `@` Windows 应用。批注可直接发送到当前会话；应用控制按任务选择官方 MCP/CLI、社区连接器，再回退到桌面操作。首次连接和安装需要确认，详见[批注与应用控制](docs/annotations-and-apps.md)。
+
 [![CI](https://img.shields.io/github/actions/workflow/status/SheepofSheep/dsh-doyourweb/ci.yml?branch=main&label=CI)](https://github.com/SheepofSheep/dsh-doyourweb/actions/workflows/ci.yml)
 [![License](https://img.shields.io/badge/license-MIT-green)](LICENSE)
 [![Node.js](https://img.shields.io/badge/Node.js-%3E%3D22-339933)](package.json)
@@ -23,13 +25,13 @@
 
 项目由 DSH 插件和配套的 Manifest V3 浏览器扩展组成。插件接入原生 `@`、`/` 菜单，扩展提供标签页信息和控制通道。完成一次配对后，扩展会在后台重连，不必一直打开弹窗。
 
-当前版本为 **ver0.1.1**，包和浏览器扩展中的数字版本为 `0.1.1`。
+当前版本为 **0.1.2**，包和浏览器扩展版本一致，变更见[更新记录](CHANGELOG.md)。
 
 ## 02 · 功能预览
 
 1. 在 DSH 输入 `/browser`，打开连接页面并查看扩展目录。
 2. 在 Chrome 或 Edge 加载扩展，核对并批准四位配对码。
-3. 用 `@`或 '/'选择已经打开的页面，再向 DSH 描述任务。
+3. 用 `@` 或 `/` 选择已经打开的页面，再向 DSH 描述任务。
 
 首屏截图展示的是配对界面，不是自动化任务录像。
 
@@ -51,8 +53,14 @@
 | 简短回执 | `observe: "summary"` 跳过下一次页面快照；动作结果有 1,600 字符输出预算。 |
 | 页面截图 | 将 PNG 保存到本地，返回文件路径，不把 base64 塞进文本上下文。 |
 | 后台连接 | 保存配对配置、自动重连，并在空闲时释放调试连接。 |
+| 元素批注 | 页面右上角“批注”选择元素，将说明、CSS 选择器、样式、位置和可选局部截图直接添加到当前会话，不另建批注库。 |
+| 应用引用 | `@` 搜索运行中的 Windows 应用窗口，显示程序图标，用进程启动时间和窗口句柄防止旧引用误控新进程。 |
+| MCP / CLI | 优先已知官方接口，查询 MCP Registry 和 npm CLI；支持本机 stdio、Streamable HTTP、自定义连接器和有来源的配置提议。 |
+| 安装确认 | DSH 原生提问或 `/apps` 本地页面批准安装；固定包版本，npm 禁用安装脚本，关闭重复询问仅限已审阅和信任的来源。 |
+| 桌面回退 | 使用 Cua Driver MCP，默认只读有限控件树、按需截图；复用窗口检查，窗口关闭或反复读取时明确停止。 |
+| 鼠标操作 | `app_mouse` 支持点击、双击、右键、滚动和拖拽，一次画面读取最多执行 8 个已知目标动作；前台操作单独确认。 |
 
-预算按 JavaScript 字符计算，包含 JSON 转义和元数据，不等于模型 token 数。它限制的是返回内容，不是 DOM 遍历耗时。项目目前没有经过测量的省 token 百分比或速度排名。
+浏览器输出预算按 JavaScript 字符计算，包含 JSON 转义和元数据；应用工具的 `limit` 限制正文，状态、步骤和图片路径等元数据另计。MCP 不重复返回相同 JSON，CLI 的 stdout 与 stderr 共用正文预算。字符数不等于模型 token 数，输出预算也不限制 DOM 遍历耗时。
 
 ### WebMCP 优先控制（实验性）
 
@@ -68,6 +76,7 @@
 | 网站工具 | `document.modelContext`、Ajv 8.20.0 参数校验 |
 | 本地桥接 | WebSocket（`ws`）、Zod 校验 |
 | 浏览器扩展 | Manifest V3、`chrome.tabs`、`chrome.debugger` |
+| 应用连接器 | 官方 MCP SDK 1.32.1、stdio / Streamable HTTP、无 shell 字符串的 CLI 参数调用 |
 | 构建与检查 | esbuild、Node.js 测试运行器、GitHub Actions |
 
 ```mermaid
@@ -89,6 +98,9 @@ flowchart LR
     Bridge <-->|"来源校验与配对令牌"| Extension
     Extension <-->|"标签页信息与调试接口"| Tabs
     Engine -->|"快照、回执、PNG 路径"| Host
+    Host --> Apps["应用发现与人类审批"]
+    Apps --> Structured["官方 / 社区 MCP 与 CLI"]
+    Apps --> Desktop["Cua Driver 桌面回退"]
 ```
 
 模型的浏览器工具只能访问用户在当前会话中引用的标签页。网页内容是不可信数据，不会作为用户指令或操作授权。
@@ -116,7 +128,7 @@ dsh-doyourweb
 ### 构建并安装本地版本
 
 ```sh
-git clone --branch ver0.1.1 https://github.com/SheepofSheep/dsh-doyourweb.git
+git clone --branch ver0.1.2 https://github.com/SheepofSheep/dsh-doyourweb.git
 cd dsh-doyourweb
 npm ci
 npm run build
@@ -165,6 +177,17 @@ npm run build
 
 同时授权了多个标签页时，工具调用需要通过 `tab` 指定已引用的页面。
 
+### 批注与应用控制
+
+安装或升级插件后，从托盘完全退出、重启 DSH，并重新加载浏览器扩展。本地开发时，先构建项目，再在 DSH 安装项目的绝对路径。不要同时启用 npm 版和本地版，以免占用同一端口。
+
+- **批注**：打开扩展弹窗，点“批注当前页面”，或者引用页面后让 DSH 开启批注。点选元素、填写说明，点“添加到会话”，批注便作为用户消息排入工具条所示会话，可附局部截图。不再保存独立批注文件或维护批注库。受控页面右上角也会显示批注按钮。
+- **应用**：输入 `@Unity` 或其他运行中的程序名，选中窗口后描述任务。AI 先用 `app_discover` 查连接器，再用 `app_connect` 请求连接或安装，最后通过 `app_call` 调用。目录未收录的连接器可凭官方文档或仓库提出配置，同样需要你确认。
+- **管理**：输入 `/apps` 打开本地“应用管理”，批准请求、配置连接器和安装策略，不用一直开着。`@` 中的文件、文件夹和对话分别显示 3 条预览，可展开或收起；单个文件夹仍可进入目录。
+- **回退**：结构化接口不适合当前任务时才调用 `app_desktop`。默认读取有限控件树、不截图；需要画面时才传 `screenshot: true`，再用 `app_mouse` 批量点击、滚动或拖拽，最多 8 步，中间不自动截图。窗口关闭、反复读取会返回 `stop: true`。使用 DSH computer-use 同源的 Cua Driver，不会绕过系统权限。
+
+详见[安装策略、Unity 配置和已知限制](docs/annotations-and-apps.md)。
+
 <details>
 <summary>工具示例：读取页面，再提取简短的结果列表</summary>
 
@@ -208,6 +231,9 @@ src/
   client-entry.js    React UI 与图标
   bridge.js          配对、扩展连接和 CDP 转发
   engine.js          快照、操作、提取与截图
+  annotations.js     隔离元素选取与批注直达会话
+  apps/              应用枚举、发现、审批、安装和 MCP/CLI/桌面调用
+  manage.js          本机应用与连接器管理页面
   webmcp.js          网站工具发现、路由、校验与调用
   grants.js          按会话管理标签页授权
   protocol.js        页面引用与 Remote RPC 描述
@@ -246,7 +272,7 @@ CI 配置了 Windows、Linux 单元测试，以及 Linux 上隔离的无头 Chro
 
 ### Roadmap
 
-本文只介绍已经实现的 `0.1.1` 版本，暂未公布后续版本的交付时间。问题反馈和功能讨论见 [Issues](https://github.com/SheepofSheep/dsh-doyourweb/issues)。
+`0.1.2` 包含页面批注、应用引用和 MCP/CLI 优先的应用控制。后续重点是更多应用的实机兼容验证与连接器配置体验，暂未公布交付时间。问题反馈和功能讨论见 [Issues](https://github.com/SheepofSheep/dsh-doyourweb/issues)。
 
 ### FAQ
 

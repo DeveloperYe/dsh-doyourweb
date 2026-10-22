@@ -217,9 +217,17 @@ chrome.runtime.onStartup.addListener(reconnect);
 chrome.runtime.onInstalled.addListener(reconnect);
 chrome.alarms.onAlarm.addListener(alarm => { if (alarm.name === "reconnect") reconnect(); });
 chrome.runtime.onMessage.addListener((message, _sender, respond) => {
-  if (!["status", "toggle", "unpair", "port"].includes(message.type)) return;
+  if (_sender.id !== chrome.runtime.id || (_sender.url && _sender.url !== chrome.runtime.getURL("popup.html"))) return;
+  if (!["status", "toggle", "unpair", "port", "annotate", "manage"].includes(message.type)) return;
   void (async () => {
     await ready;
+    if (message.type === "manage") { await chrome.tabs.create({ url: `http://127.0.0.1:${port}/manage` }); respond({ ok: true }); return; }
+    if (message.type === "annotate") {
+      if (!token || socket?.readyState !== WebSocket.OPEN || pairing) throw new Error("请先连接 DSH");
+      const [tab] = await chrome.tabs.query({ active: true, currentWindow: true });
+      if (!tab || !/^https?:\/\//.test(tab.url || "") || tab.incognito) throw new Error("请选择普通 HTTP/HTTPS 页面");
+      send({ method: "dsh.annotation.start", params: { tabId: tab.id } }); respond({ ok: true }); return;
+    }
     if (message.type === "status") {
       respond({ connected: !!token && socket?.readyState === WebSocket.OPEN && !pairing,
         availableTabs, controlledTabs: attached.size, stopped, paired: !!token,

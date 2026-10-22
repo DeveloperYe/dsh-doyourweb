@@ -21,6 +21,9 @@ async function refresh() {
 }
 
 function showError(error) { status.textContent = error.message; }
+for (const type of ["annotate", "manage"]) document.querySelector(`#${type}`).addEventListener("click", () => {
+  void send({ type }).catch(showError);
+});
 
 async function send(message) {
   const result = await chrome.runtime.sendMessage(message);

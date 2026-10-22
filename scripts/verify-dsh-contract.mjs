@@ -25,10 +25,14 @@ import { mkdir, readFile, stat, writeFile } from "node:fs/promises";
 import path from "node:path";
 import os from "node:os";
 import { fileURLToPath, pathToFileURL } from "node:url";
+import { createRequire } from "node:module";
+import { transform } from "esbuild";
 import assert from "node:assert/strict";
 import * as cordis from "@deepseek-ai/cordis";
 import { Context } from "@deepseek-ai/cordis";
 import { PACKAGE, descriptors, hostContribution, remoteContribution } from "../src/protocol.js";
+import { compactReferences } from "../src/reference-folders.js";
+import { balanceFileReferences } from "../src/file-references.js";
 
 const root = fileURLToPath(new URL("..", import.meta.url));
 const argument = name => {
@@ -87,7 +91,7 @@ async function extract(suffixes) {
 /** Load one DSH client bundle: it registers itself with the shell module loader. */
 async function loadClientBundle(file, stubs = {}) {
   const modules = new Map();
-  globalThis.window = { __ModuleLoader__: { load: entry => modules.set(entry.id, entry.factory) } };
+  globalThis.window = { addEventListener() {}, removeEventListener() {}, __ModuleLoader__: { load: entry => modules.set(entry.id, entry.factory) } };
   new Function("window", await readFile(file, "utf8"))(globalThis.window);
   const entry = [...modules.entries()][0];
   assert.ok(entry, `${path.basename(file)} did not register with the module loader`);
@@ -104,7 +108,7 @@ async function verifyRegistry(bundle) {
   const context = new Context();
   new TypertRegistry(context);
   const dispose = context.typert.register(hostContribution);
-  const payloads = { list: { query: "docs" }, setup: {}, focus: { ref: "dsh-browser://profile/1" } };
+  const payloads = { list: { query: "docs" }, setup: {}, focus: { ref: "dsh-browser://profile/1" }, apps: { query: "Unity" }, annotationSession: { client: "verify", revision: 1, sessionId: "verify", title: "Test", active: true }, manage: {} };
   for (const descriptor of descriptors) {
     const registered = context.typert.local.get(`${descriptor.namespace}/${descriptor.method}`);
     assert.equal(registered?.id, descriptor.id, `${descriptor.method} must register`);
@@ -161,11 +165,11 @@ async function verifyGateway(bundle) {
   console.log("PASS: the real client Gateway mounts and invokes the Remote contribution.");
 }
 
-async function verifyBuiltClient(gatewayBundle) {
-  let built;
+async function verifyBuiltClient(gatewayBundle, inputBundle) {
+  let built; const cleanups = [];
   try {
     built = await loadClientBundle(path.resolve(root, "lib/client.js"), {
-      react: { createElement: () => null, useState: () => [undefined, () => {}] },
+      react: { createElement: () => null, useState: () => [undefined, () => {}], useEffect: effect => cleanups.push(effect()) },
       "@deepseek-ai/dsh-client-ui-primitives": { IconGlobeOutlineRegular: () => null },
     });
   } catch (error) {
@@ -174,32 +178,175 @@ async function verifyBuiltClient(gatewayBundle) {
   }
   const gateway = await loadClientBundle(gatewayBundle);
   const tab = { ref: "dsh-browser://profile/7", title: "Example", url: "https://example.com/page", browser: "Edge" };
-  const connection = fakeConnection([], endpoint => ({ ok: true,
+  const calls = [];
+  const connection = fakeConnection(calls, endpoint => ({ ok: true,
     value: endpoint === "browserTabs/list" ? { tabs: [tab], connected: true } : { ok: true } }));
   const context = new Context();
   context.provide("connection", connection);
   context.provide("typert", { remotes: { register: () => () => {} } });
-  const sources = [];
-  context.provide("inputTriggers", { registerSource: source => { sources.push(source); return () => {}; } });
+  const snapshotStore = initial => {
+    let current = initial; const listeners = new Set();
+    return { getSnapshot: () => current, set: value => { current = value; for (const fn of listeners) fn(); },
+      subscribe: fn => { listeners.add(fn); return () => listeners.delete(fn); } };
+  };
+  const { InputTriggerService } = await loadClientBundle(inputBundle, {
+    "@deepseek-ai/dsh-client-store": { createSnapshotStore: snapshotStore },
+    "react/jsx-runtime": {}, react: {}, "@deepseek-ai/dsh-client-ui-primitives": {},
+  });
+  const session = { sessionId: "verify" }, binding = { sessionId: "verify", session, ctx: context };
+  context.provide("sessions", { sessionOf: () => session, binding: id => id === "verify" ? binding : undefined,
+    list: { getSnapshot: () => ({ byId: { verify: { title: "Verify conversation" } } }) } });
+  let annotationSlot;
+  context.provide("slots", { inject: (_name, factory) => factory(), register: (definition, component) => { annotationSlot = { definition, component }; } });
+  new InputTriggerService(context);
+  const service = context.get("inputTriggers"); const sources = service.live.sources;
+  const referenceItems = ["file", "folder", "session"].flatMap(kind => Array.from({ length: 9 }, (_, index) => ({ name: `${kind}-${index}`, section: kind,
+    value: JSON.stringify({ kind: kind === "folder" ? "file" : kind, ...(kind === "folder" ? { fileKind: "directory" } : {}), mention: `@${kind}-${index}` }) })));
+  const originalCandidates = async () => referenceItems;
+  const nativeReference = { trigger: "@", name: "reference", candidates: originalCandidates,
+    onPick: ({ candidate }) => ({ insert: { source: "reference", ref: JSON.parse(candidate.value).mention } }) };
+  service.registerSource(nativeReference);
   gateway.apply(context);
   const fiber = context.plugin({ name: PACKAGE, inject: built.inject, apply: ctx => built.apply(ctx) });
   await fiber.await();
   assert.ok(context.remote.browserTabs, "the built client must mount remote.browserTabs");
-  const source = sources.find(candidate => candidate.trigger === "@");
+  assert.equal(annotationSlot?.definition.name, "conversation.input.overlay");
+  annotationSlot.component(annotationSlot.definition.inject("verify"));
+  await new Promise(resolve => setTimeout(resolve, 0));
+  const activation = calls.find(call => call.endpoint === "browserTabs/annotationSession").args.request;
+  assert.equal(activation.sessionId, "verify"); assert.equal(activation.title, "Verify conversation"); assert.equal(activation.active, true);
+  for (const cleanup of cleanups) cleanup?.();
+  await new Promise(resolve => setTimeout(resolve, 0));
+  const deactivation = calls.filter(call => call.endpoint === "browserTabs/annotationSession").at(-1).args.request;
+  assert.equal(deactivation.active, false); assert.ok(deactivation.revision > activation.revision);
+  const source = sources.find(candidate => candidate.name === "browser-tabs");
   assert.ok(source, "the built client must register its @ source");
   const items = await source.candidates({ sessionId: "verify" }, { query: "", quoted: false, drilled: false });
   assert.equal(items.length, 1, JSON.stringify(items));
   assert.equal(items[0].name, "Example");
+  const controller = service.sessionOf(context); let revision = 0;
+  const guard = { tier: "free" };
+  context.on("slash/input-insert-text", ({ text }) => {
+    queueMicrotask(() => controller.track(text, text.length, guard, ++revision)); return true;
+  });
+  const waitMenu = async predicate => {
+    for (let index = 0; index < 100; index++) {
+      const menu = controller.menu.getSnapshot();
+      if (predicate(menu)) return menu;
+      await new Promise(resolve => setTimeout(resolve, 5));
+    }
+    throw new Error("The real DSH controller did not settle the reference group");
+  };
+  const referenceRows = state => state.groups.find(group => group.source === "reference")?.items || [];
+  controller.track("@", 1, guard, revision);
+  const collapsed = await waitMenu(state => state.open && referenceRows(state).length === 12);
+  const expand = referenceRows(collapsed).findIndex(item => item.name === "展开文件（9）");
+  controller.pick("reference", expand, "pick");
+  const files = await waitMenu(state => state.open && state.hit.query === "文件:" && referenceRows(state).length === 10);
+  assert.equal(referenceRows(files)[0].name, "收起文件");
+  assert.equal(stateReadyItems(files, "browser-tabs").length, 0);
+  controller.pick("reference", 0, "pick");
+  await waitMenu(state => state.open && state.hit.query === "" && referenceRows(state).length === 12);
+  assert.equal(controller.drilled, false);
+  controller.pick("reference", expand, "drill");
+  await waitMenu(state => state.open && state.hit.query === "文件:" && referenceRows(state).length === 10);
+  controller.pick("reference", 0, "pick");
+  const rootMenu = await waitMenu(state => state.open && state.hit.query === "" && referenceRows(state).length === 12);
+  assert.equal(controller.drilled, false);
+  controller.pick("reference", referenceRows(rootMenu).findIndex(item => item.name === "展开文件夹（9）"), "pick");
+  const folders = await waitMenu(state => state.open && state.hit.query === "文件夹:" && referenceRows(state).length === 10);
+  assert.equal(referenceRows(folders)[0].name, "收起文件夹");
+  assert.equal(referenceRows(folders).filter(item => JSON.parse(item.value).fileKind === "directory").length, 9);
+  controller.pick("reference", 0, "pick");
+  await waitMenu(state => state.open && state.hit.query === "" && referenceRows(state).length === 12);
+  assert.equal(controller.drilled, false);
+  controller.dismiss();
   await fiber.dispose();
+  assert.equal(nativeReference.candidates, originalCandidates, "unload restores the native reference source");
   await context.fiber.dispose();
-  console.log("PASS: the built client mounts the namespace and its @ source lists host tabs.");
+  console.log("PASS: built client lists tabs and publishes active conversation lifecycle; the real DSH registry/controller expands and collapses files/folders/conversations by click and drill, and unload restores them.");
+}
+
+function stateReadyItems(state, name) { return state.groups.find(group => group.source === name)?.items || []; }
+
+async function verifyNativeReferenceSource(bundle, searchBundle) {
+  const native = await loadClientBundle(bundle, { react: {}, "react/jsx-runtime": {}, "@deepseek-ai/dsh-client-ui-primitives": {} });
+  const sources = [], lookups = [];
+  const service = { live: { sources }, registerSource(source) { sources.push(source); return () => {}; } };
+  const binding = { session: { getSnapshot: () => ({ openState: "open" }) } };
+  const sessions = { binding: () => binding, using: (_id, _options, callback) => callback({ binding }), list: { getSnapshot: () => ({ byId: {} }) } };
+  const items = Array.from({ length: 7 }, (_, i) => ({ kind: "file", path: `src/file-${i}.js` }))
+    .concat(Array.from({ length: 7 }, (_, i) => ({ kind: "directory", path: `dir-${i}` })));
+  const context = {
+    effect: factory => factory(), locale: { register() {}, bind: () => key => key },
+    uiConversation: { userText: { register() {} } }, slots: { inject() {} },
+    get: name => name === "sessions" ? sessions : name === "inputTriggers" ? service : undefined,
+    remote: { $host: { home: "/home/test" },
+      fileReferences: { list: async (_id, query) => { lookups.push(query); return { ok: true, value: query ? [] : items }; } },
+      sessionReferenceResolver: { candidates: async () => ({ ok: true, value: [] }) } },
+  };
+  native.apply(context);
+  const restore = compactReferences(service), source = sources.find(value => value.name === "reference");
+  const session = { sessionId: "verify" }, request = query => ({ query, signal: new AbortController().signal });
+  for (const query of ["文件", "文件:", "files", "文件："]) {
+    const files = await source.candidates(session, request(query));
+    assert.equal(files.length, 8); assert.equal(lookups.at(-1), "");
+    assert.equal(source.onPick({ candidate: files[1], action: "pick" }).insert.ref, "@src/file-0.js");
+  }
+  const folders = await source.candidates(session, request("文件夹"));
+  assert.equal(folders.length, 8);
+  assert.deepEqual(source.onPick({ candidate: folders[1], action: "drill" }), { text: "@dir-0/", continue: true });
+  const rootItems = await source.candidates(session, request(""));
+  assert.equal(rootItems.filter(item => JSON.parse(item.value).fileKind === "file").length, 3);
+  assert.equal(rootItems.find(item => JSON.parse(item.value).fileKind === "file").section, "文件");
+  restore();
+  console.log("PASS: the installed native file source lists actual file/folder candidate shapes, accepts @file aliases, and preserves native file insertion/folder navigation.");
+
+  // Only the provider's registration/schema dependencies are stubbed. Its
+  // actual exported WorkspaceFileSearch runs unchanged against a real tree.
+  const chain = { step() { return this; }, min() { return this; }, default() { return this; } };
+  const schema = { object: value => value, number: () => chain, string: () => chain, array: () => chain };
+  const stubs = { "@deepseek-ai/schemastery": { __esModule: true, default: schema },
+    "@deepseek-ai/dsh-file-reference": { __esModule: true, default: class {}, FILE_REFERENCE_PROMPT: "" },
+    "@deepseek-ai/dsh-file-reference/grammar": {} };
+  const require = createRequire(import.meta.url), module = { exports: {} };
+  const compiled = await transform(await readFile(searchBundle, "utf8"), { format: "cjs", platform: "node" });
+  new Function("require", "module", "exports", compiled.code)(id => stubs[id] ?? require(id), module, module.exports);
+  const { WorkspaceFileSearch, DEFAULT_FILE_SEARCH_EXCLUDED_DIRECTORIES } = module.exports;
+  const fixtureRoot = path.join(output, "file-limit-workspace");
+  await mkdir(fixtureRoot, { recursive: true });
+  for (let i = 0; i < 25; i++) await mkdir(path.join(fixtureRoot, `dir-${i}`), { recursive: true });
+  for (const name of ["README.md", "LICENSE"]) await writeFile(path.join(fixtureRoot, name), "fixture");
+  const config = { maxResults: 20, maxEntries: 50000, excludedDirectories: DEFAULT_FILE_SEARCH_EXCLUDED_DIRECTORIES };
+  const search = new WorkspaceFileSearch(fixtureRoot, config);
+  try {
+    const limited = await search.list("", new AbortController().signal);
+    assert.equal(limited.length, 20); assert.equal(limited.every(item => item.kind === "directory"), true, "reproduce native file starvation before the fix");
+    const agent = {}, host = { config, list: (_agent, query, signal) => search.list(query, signal) };
+    const restoreHost = balanceFileReferences(host, { ensure: async () => fixtureRoot });
+    context.remote.fileReferences.list = async (_id, query, signal) => ({ ok: true, value: await host.list(agent, query, signal) });
+    const restoreClient = compactReferences(service);
+    try {
+      const bare = await source.candidates(session, request(""));
+      assert.equal(bare[0].section, "文件");
+      assert.deepEqual(bare.filter(item => JSON.parse(item.value).fileKind === "file").map(item => item.name), ["LICENSE", "README.md"]);
+      assert.equal((await host.list(agent, "", new AbortController().signal)).length, 20, "total native result budget stays bounded");
+      const files = await source.candidates(session, request("文件"));
+      assert.equal(source.onPick({ candidate: files[1], action: "pick" }).insert.source, "reference");
+    } finally { restoreClient(); restoreHost(); }
+  } finally { search.dispose(); }
+  console.log("PASS: the installed native filesystem provider reproduces the 20-directory starvation; the host/client fix restores files in bare @ while retaining native insertion and the result budget.");
 }
 
 const bundles = await extract([
   "dsh-api-gateway/lib/client.js",
   "dsh-typert-registry/lib/index.js",
+  "dsh-client-ui-input-trigger/lib/client.js",
+  "dsh-client-ui-reference/lib/client.js",
+  "dsh-file-reference-local/lib/index.js",
 ]);
 await verifyRegistry(bundles.get("dsh-typert-registry/lib/index.js"));
 await verifyGateway(bundles.get("dsh-api-gateway/lib/client.js"));
-await verifyBuiltClient(bundles.get("dsh-api-gateway/lib/client.js"));
+await verifyBuiltClient(bundles.get("dsh-api-gateway/lib/client.js"), bundles.get("dsh-client-ui-input-trigger/lib/client.js"));
+await verifyNativeReferenceSource(bundles.get("dsh-client-ui-reference/lib/client.js"), bundles.get("dsh-file-reference-local/lib/index.js"));
 console.log(`\nAll DSH contract checks passed against ${path.basename(archive)}.`);

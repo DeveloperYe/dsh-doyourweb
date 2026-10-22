@@ -4,5 +4,7 @@ export function serialize(value) {
 
 export function clip(value, limit) {
   const text = String(value ?? "");
-  return text.length > limit ? `${text.slice(0, Math.max(0, limit - 3))}...` : text;
+  if (text.length <= limit) return text;
+  if (limit < 3) return ".".repeat(Math.max(0, limit));
+  return `${text.slice(0, limit - 3)}...`;
 }

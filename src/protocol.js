@@ -38,6 +38,7 @@ const FIELD_KINDS = {
   boolean: { test: value => typeof value === "boolean", describe: "a boolean" },
   array: { test: value => Array.isArray(value), describe: "an array" },
   object: { test: isPlainObject, describe: "a plain object" },
+  number: { test: value => Number.isSafeInteger(value) && value >= 0, describe: "a nonnegative integer" },
 };
 
 /** Boundary validation for one wire object: unknown fields and mistyped fields are rejected. */
@@ -88,6 +89,12 @@ const invocations = [
     result: result("browserTabs/setup", { url: "string", extensionPath: "string" }) },
   { method: "focus", parameters: request("browserTabs/focus", { ref: "string" }),
     result: result("browserTabs/focus", { ok: "boolean" }) },
+  { method: "apps", parameters: request("browserTabs/apps", { query: "string" }),
+    result: result("browserTabs/apps", { apps: "array", error: "string" }) },
+  { method: "annotationSession", parameters: request("browserTabs/annotationSession", { client: "string", revision: "number", sessionId: "string", title: "string", active: "boolean" }),
+    result: result("browserTabs/annotationSession", { ok: "boolean" }) },
+  { method: "manage", parameters: request("browserTabs/manage", {}),
+    result: result("browserTabs/manage", { url: "string" }) },
 ];
 
 export const descriptors = invocations.map(({ method, parameters, result: codec }) => ({

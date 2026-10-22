@@ -1,6 +1,6 @@
 import { chromium } from "playwright-core";
 import { createServer } from "node:http";
-import { mkdtemp, readFile, rm } from "node:fs/promises";
+import { mkdtemp, readFile, rm, mkdir } from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
 import assert from "node:assert/strict";
@@ -9,6 +9,7 @@ import { BrowserEngine } from "../src/engine.js";
 import { WebMCP } from "../src/webmcp.js";
 import { serialize } from "../src/output.js";
 import { parseRef } from "../src/protocol.js";
+import { Annotations } from "../src/annotations.js";
 
 const home = await mkdtemp(path.join(os.tmpdir(), "dsh-browser-test-"));
 const favicon = await readFile(new URL("../extension/icons/icon-16.png", import.meta.url));
@@ -40,6 +41,7 @@ async function launchBrowser() {
   return chromium.launchPersistentContext(path.join(home, "profile"), {
     headless: true, channel: "chromium",
     args: ["--enable-experimental-web-platform-features",
+      `--explicitly-allowed-ports=${server.address().port}`,
       `--disable-extensions-except=${bridge.extensionPath}`, `--load-extension=${bridge.extensionPath}`],
   });
 }
@@ -232,6 +234,104 @@ try {
     "browser restart rotates tab identity even if numeric IDs are reused");
   assert.throws(() => bridge.resolve(tab.ref), /offline|session/i);
   await engine.read(afterRestart.ref);
+  const annotationMessages = [];
+  const annotations = new Annotations(bridge, { submit: async request => { annotationMessages.push(request); return { accepted: true }; } });
+  bridge.idleTimeoutMs = 30000;
+  bridge.beforeRelease = ref => annotations.detach(ref);
+  // CDP can inspect closed roots for tests; ordinary page scripts cannot access them.
+  async function annotationControl(selector, evaluate, value) {
+    const entry = annotations.pages.get(afterRestart.ref);
+    const { root } = await entry.cdp.send("DOM.getDocument", { depth: -1, pierce: true });
+    const findToolbar = node => node.attributes?.includes("data-dsh-annotation") ? node
+      : [...(node.children || []), ...(node.shadowRoots || [])].map(findToolbar).find(Boolean);
+    const host = findToolbar(root); assert.equal(host.shadowRoots[0].shadowRootType, "closed");
+    const { nodeId } = await entry.cdp.send("DOM.querySelector", { nodeId: host.shadowRoots[0].nodeId, selector });
+    assert.ok(nodeId, `annotation control ${selector} exists`);
+    const context = [...entry.contexts.values()].find(item => item.name === entry.world && item.auxData?.frameId === entry.frameId);
+    const { object } = await entry.cdp.send("DOM.resolveNode", { nodeId, executionContextId: context.id });
+    try {
+      const result = await entry.cdp.send("Runtime.callFunctionOn", { objectId: object.objectId,
+        functionDeclaration: `function(value) { return (${evaluate.toString()})(this, value); }`,
+        arguments: value === undefined ? [] : [{ value }], returnByValue: true, awaitPromise: true });
+      assert.equal(result.exceptionDetails, undefined); return result.result.value;
+    } finally { await entry.cdp.send("Runtime.releaseObject", { objectId: object.objectId }); }
+  }
+  async function clickAnnotation(selector) {
+    const point = await annotationControl(selector, element => { const box = element.getBoundingClientRect(); return { x: box.x + box.width / 2, y: box.y + box.height / 2 }; });
+    await reopened.mouse.click(point.x, point.y);
+  }
+  const fillAnnotation = text => annotationControl("textarea", (element, value) => { element.value = value; }, text);
+  const waitAnnotation = text => annotationControl("output", (element, value) => {
+    if (element.textContent.includes(value)) return;
+    return new Promise(resolve => { const observer = new MutationObserver(() => { if (element.textContent.includes(value)) { observer.disconnect(); resolve(); } }); observer.observe(element, { childList: true, subtree: true, characterData: true }); });
+  }, text);
+  annotations.currentSession({ client: "browser-test", revision: 1, sessionId: "frontend-session", title: "Frontend test", active: true });
+  await annotations.start(afterRestart.ref);
+  const toolbar = reopened.locator('[data-dsh-annotation="toolbar"]');
+  await reopened.evaluate(() => {
+    window.pointerEffects = 0;
+    document.querySelector("#save").addEventListener("pointerdown", () => window.pointerEffects++);
+  });
+  await reopened.locator("#save").click();
+  assert.equal(await reopened.evaluate(() => window.pointerEffects), 0, "element selection must intercept pointerdown as well as click");
+  assert.equal(await reopened.locator("#out").textContent(), "", "selection must not activate the underlying button");
+  assert.equal(await reopened.evaluate(() => document.querySelector('[data-dsh-annotation="toolbar"]').shadowRoot), null, "page scripts cannot rewrite the private annotation controls");
+  await fillAnnotation("Make this button green");
+  await annotationControl('input[type="checkbox"]', element => { element.checked = true; });
+  await annotationControl("button.primary", button => button.click());
+  assert.equal(annotationMessages.length, 0, "a synthetic website click must not submit a user message");
+  assert.equal(await reopened.evaluate(() => Object.keys(window).some(key => key.startsWith("__dshAnnotate_"))), false, "page scripts cannot see the isolated sending channel");
+  await clickAnnotation("button.primary");
+  await waitAnnotation("已添加到会话");
+  const [message] = annotationMessages;
+  assert.equal(message.sessionId, "frontend-session"); assert.equal(message.mode, "queue");
+  assert.match(message.content[0].text, /#save/); assert.match(message.content[0].text, /Make this button green/);
+  assert.ok(Buffer.from(message.content[1].data, "base64").length > 50);
+  await reopened.reload();
+  await toolbar.waitFor();
+  assert.equal(await reopened.frameLocator("iframe").locator('[data-dsh-annotation="toolbar"]').count(), 0, "toolbar must not be injected into child frames");
+  const artifactDir = process.env.DSH_TEST_ARTIFACTS;
+  if (artifactDir) await mkdir(artifactDir, { recursive: true });
+  for (const width of [1280, 375]) {
+    await reopened.setViewportSize({ width, height: 800 });
+    const box = await toolbar.boundingBox(); assert.ok(box.x >= 0 && box.x + box.width <= width, "annotation controls must fit mobile and desktop");
+    if (artifactDir) await reopened.screenshot({ path: path.join(artifactDir, `annotation-${width}.png`) });
+  }
+  bridge.management = async ({ action }) => action === "apps" ? { apps: [{ name: "Unity", title: "Test project", ref: "fixture" }] }
+    : { applications: { plans: [], connectors: [], connections: [], policy: { askBeforeInstall: true, trustedPublishers: [] } } };
+  const manager = await browser.newPage();
+  const errors = []; manager.on("pageerror", error => errors.push(error.message));
+  await manager.goto(`http://127.0.0.1:${bridge.port}/manage`);
+  await manager.locator("#status").filter({ hasText: "本机连接已就绪" }).waitFor();
+  await manager.getByRole("tab", { name: "应用程序" }).click();
+  await manager.getByRole("cell", { name: "Unity", exact: true }).waitFor();
+  assert.equal(await manager.getByRole("tab", { name: "批注", exact: true }).count(), 0, "there is no independent annotation library");
+  for (const width of [1280, 375]) {
+    await manager.setViewportSize({ width, height: 800 });
+    assert.equal(await manager.evaluate(() => document.documentElement.scrollWidth <= innerWidth), true, "management page must not overflow horizontally");
+    if (artifactDir) await manager.screenshot({ path: path.join(artifactDir, `management-${width}.png`), fullPage: true });
+  }
+  assert.deepEqual(errors, []); await manager.close(); await annotations.detach(afterRestart.ref);
+  assert.equal(await toolbar.count(), 0, "annotation close must remove the toolbar");
+  await annotations.start(afterRestart.ref);
+  await reopened.locator("#save").click();
+  await fillAnnotation("Unfinished draft");
+  bridge.idleTimeoutMs = 500;
+  bridge.release(afterRestart.ref);
+  await toolbar.waitFor({ state: "detached" });
+  bridge.idleTimeoutMs = 30000;
+  await annotations.start(afterRestart.ref);
+  await reopened.locator("#save").click();
+  assert.equal(await annotationControl("textarea", element => element.value), "Unfinished draft", "idle detach keeps a draft in the original page only");
+  annotations.currentSession({ client: "browser-test", revision: 2, sessionId: "another-session", title: "Another conversation", active: true });
+  await annotations.start(afterRestart.ref);
+  await reopened.locator("#save").click();
+  await fillAnnotation("Second annotation");
+  await clickAnnotation("button.primary");
+  await waitAnnotation("Another conversation");
+  assert.equal(annotationMessages[1].sessionId, "another-session");
+  await annotations.close();
+  console.log("PASS: isolated element picker, trusted-click-only direct conversation messages, cropped image attachments without annotation files, session switching, draft recovery and responsive management UI.");
   engine.close();
   console.log("PASS: code pairing, cached tab icons, background reconnect, browser-lifetime authorization, authenticated CDP, batched fill/click/wait/extract, summary output, iframe refs through the engine, stale navigation, in-flight cancellation, screenshot, idle detach and reattach without closing the tab.");
 } finally {

@@ -272,10 +272,23 @@ async function verifyBuiltClient(gatewayBundle, inputBundle) {
   await waitMenu(state => state.open && state.hit.query === "" && referenceRows(state).length === 12);
   assert.equal(controller.drilled, false);
   controller.dismiss();
+  // Sources registered after this plugin must still be invoked. The installed
+  // controller calls .then() directly on every candidates() result.
+  for (const name of ["command", "context", "skills"]) service.registerSource({
+    trigger: "/", name, async candidates() { return [{ name: `${name}-item`, value: name }]; },
+    onPick: () => ({ text: "" }),
+  });
+  for (const text of ["/", "/apps", "/unmatched"]) {
+    assert.doesNotThrow(() => controller.track(text, text.length, guard, ++revision),
+      "slash candidate sources must return Promises so later sources can load");
+    const slash = await waitMenu(state => state.open && ["command", "context", "skills"].every(name => stateReadyItems(state, name).length === 1));
+    assert.ok(slash.groups.every(group => group.status !== "pending"), "no slash group should remain a loading skeleton");
+    controller.dismiss();
+  }
   await fiber.dispose();
   assert.equal(nativeReference.candidates, originalCandidates, "unload restores the native reference source");
   await context.fiber.dispose();
-  console.log("PASS: built client lists tabs and publishes active conversation lifecycle; the real DSH registry/controller expands and collapses files/folders/conversations by click and drill, and unload restores them.");
+  console.log("PASS: built client lists tabs and publishes active conversation lifecycle; the real DSH registry/controller expands and collapses references, settles all slash sources, and restores references on unload.");
 }
 
 function stateReadyItems(state, name) { return state.groups.find(group => group.source === name)?.items || []; }

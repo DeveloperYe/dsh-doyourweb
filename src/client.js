@@ -111,6 +111,7 @@ export function apply(ctx, { browserIcon, tabIcon, appIcon = browserIcon, applic
     }));
   }
   ctx.effect(() => ctx.inputTriggers.registerSource({ trigger: "/", name: "doyourweb-manage", showGroupTitle: false,
-    candidates: (_session, { query = "" }) => !query || "apps 应用 doyourweb".includes(query.toLowerCase())
+    // DSH chains .then() directly; even local candidate lists must be async.
+    candidates: async (_session, { query = "" }) => !query || "apps 应用 doyourweb".includes(query.toLowerCase())
       ? [{ name: "apps", label: "应用管理", description: "连接器与安装确认", value: "manage", section: "DoYourWeb", icon: appIcon }] : [], onPick }));
 }

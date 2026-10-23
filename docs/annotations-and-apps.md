@@ -98,7 +98,7 @@ MCP 支持 stdio 和 Streamable HTTP。非本机远程接口要求 HTTPS；本�
 
 `app_call.limit` 限制 CLI 的 stdout、stderr 合计正文，MCP 的文本与结构化正文共用预算，相同 JSON 只返回一份。桌面批处理按整批 `limit` 均分正文预算，预算用尽后不再输出空文本块。状态、步骤及图片路径等元数据另计；字符预算不等于模型实际计费 token 数。
 
-窗口列表缓存 2.5 秒，并发枚举合并为一次；真正发送输入前仍重新校验窗口及进程身份。MCP/CLI 调用不依赖窗口存活。桌面读取会恢复同路径的唯一窗口，或后台发起一次启动并有限等待；启动失败时返回具体诊断，可用 computer use 检查启动过程，不反复要求手动开窗。新窗口必须重新读取，旧快照不能用于输入。已安装程序目录缓存 60 秒。MCP Registry 与 npm CLI 发现并发执行，不再串行等待两个网络超时。默认控件读取超时 8 秒，整组输入超时 15 秒，可用 `timeout` 调整到最多 30 秒。
+窗口列表缓存 2.5 秒，并发枚举合并为一次；真正发送输入前仍重新校验窗口及进程身份。MCP/CLI 调用不依赖窗口存活。桌面读取会恢复同路径的唯一窗口，或后台发起一次启动并有限等待；启动失败时返回具体诊断，可用 computer use 检查启动过程，不反复要求手动开窗。新窗口必须重新读取，旧快照不能用于输入。菜单只枚举运行中的窗口，不再扫描已安装程序目录。默认发现只查 MCP，不额外查询 npm CLI。默认控件读取超时 8 秒，整组输入超时 15 秒，可用 `timeout` 调整到最多 30 秒。
 
 <details>
 <summary>模型工具参数示例：读取一次画面，再点击并拖拽</summary>
@@ -122,7 +122,33 @@ MCP 支持 stdio 和 Streamable HTTP。非本机远程接口要求 HTTPS；本�
 }
 ```
 
-键盘与控件动作仍可使用 `app_desktop.steps`，格式为 `[{"tool":"press_key","arguments":{...}}]`；先用 `app_connect.query` 查询驱动实际支持的参数。不要猜测元素编号或坐标。
+`app_type` 可在一次调用中填入文本并按 Enter。下面的控件名称需要来自刚读取的窗口；Steam 的树为空时应改用截图中的真实坐标：
+
+```json
+{
+  "app": "<用户选中的应用引用>",
+  "snapshot": "<app_desktop 返回的 snapshot UUID>",
+  "element": { "role": "ComboBox", "name": "搜索商店" },
+  "text": "Isaac",
+  "keys": ["Enter"]
+}
+```
+
+默认 `mode: "auto"` 有控件目标时使用 UIA，否则使用按键输入。`mode: "value"` 要求 UIA 控件目标并替换其值；`mode: "keys"` 使用已聚焦字段或截图中的 `x,y`，不要同时传 UIA 控件句柄。单键用 `keys: ["Tab"]`、`["Esc"]`，组合键用 `["ctrl", "a"]`。后台不可用时会明确拒绝，不自动换通道重复输入。部分批次已输入文字、但 Enter 失败时，只能检查后继续尚未完成的步骤。
+
+`app_desktop`、`app_mouse`、`app_type` 均可附带 `expect: {"role":"ComboBox","name":"搜索商店","value":"Isaac"}`，执行后读取一次并检查准确匹配，返回新快照和控件。它不轮询、不重放动作，读到字段值也不代表搜索结果已加载。
+
+`app_desktop` 的辅助操作：
+
+- `tool: "capabilities"` 返回允许的动作及参数；`key`、`type` 分别兼容 `press_key`、`type_text`，也允许驱动提供的 `set_value`。
+- `tool: "controls"` 配合原 `snapshot` 和 `arguments: {"offset": 20}`，读取已有控件的下一页，不重新遍历 UIA。下一页偏移量取自 `next_offset`。
+- `tool: "focus_window"` 恢复并显示所选窗口，再读取状态；附加 `screenshot: true` 可取得恢复后的画面。不切换到另一个应用或同进程的其他顶层窗口。
+
+`snapshot` 是插件用于会话和窗口校验的 UUID，`snapshot_id` 是驱动返回的 `s0000000d` 一类句柄，两者不能推导。使用 `element_index` 时插件自动补充匹配的驱动句柄；也可直接用 `element_token`，或 `element: {"role":"Button","name":"搜索"}` 做唯一、准确匹配。分页和缓存读取不使令牌失效；驱动产生新快照后，旧令牌仍会失效。
+
+最小化窗口可能返回 `(-32000,-32000)`。插件检查 DWM 边界及底层输入矩形，遇到伪坐标会在投递前拒绝；先恢复并读取窗口，再操作。坐标诊断中的屏幕点是按截图尺寸估算，实际投递仍由驱动完成。窗口调整大小后需重新截图。
+
+CEF/SDL、Electron、Qt 等程序的后台输入支持各不相同。首步明确拒绝且未投递时保留快照，不设置未知副作用锁；超时、部分执行或其他未知错误仍需读取状态。CEF 空树时会给出截图路径和应用支持的 `--force-renderer-accessibility` 提示，不自动重启程序、修改启动参数或开启 CDP 端口。Steam 的商店个性化过滤也不会被插件修改。
 
 </details>
 
@@ -155,3 +181,6 @@ Disabling installation prompts only bypasses repeat-install approval for an unch
 Background MCP/CLI connections keep working without a visible window. Desktop reads can rebind the selected executable, but snapshots are tied to the current process/window identity. References expire on plugin restart. This scopes routing, not the third-party connector's OS privileges: MCP servers and CLIs are not sandboxed to the selected application. Unity additionally requires compatible editor/project integration such as Unity Pipeline; installing its CLI alone does not configure the project.
 
 Validation uses unit tests, a real stdio MCP fixture, disposable Chromium extension/CDP tests, responsive annotation/management screenshots and the installed DSH Remote contract. Real desktop applications, user browser profiles and third-party installations were not exercised. Browser support remains Chromium-based Chrome/Edge; app inventory is Windows-only.
+
+
+Version 0.1.6 adds `app_type` (text plus Enter/Tab/Esc/chords), exact `element:{role,name}` lookup, and optional `expect` readback. `app_desktop` helpers `capabilities`, `controls` with `arguments.offset`, and `focus_window` expose supported parameters, page cached handles, and restore/read the exact selected window. Plugin `snapshot` UUIDs and driver `snapshot_id` handles are separate; paging does not refresh driver tokens. Structured control handles survive text truncation. DWM frame bounds plus native sentinel checks refuse minimized pixel input before dispatch; resize requires another visual snapshot. Known pre-input refusals do not create an uncertainty lock. The connection and annotation UI has been refreshed. Sparse CEF accessibility trees still require screenshots; background input and accessibility support depend on the application. No debugging port is opened or application restarted automatically.

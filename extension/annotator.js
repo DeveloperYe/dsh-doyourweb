@@ -9,11 +9,12 @@ export function installAnnotator({ binding, title = "DSH DoYourWeb", active = fa
   }
   const host = document.createElement("div");
   host.dataset.dshAnnotation = "toolbar";
-  host.style.cssText = "all:initial;position:fixed;right:16px;top:12px;z-index:2147483647";
+  host.style.cssText = "all:initial;font:13px/1.5 system-ui,sans-serif;color:#233b34;position:fixed;right:16px;top:12px;z-index:2147483647";
   const root = host.attachShadow({ mode: "closed" });
   const style = document.createElement("style");
   style.textContent = `:host{font:13px/1.5 system-ui;color:#202124}*{box-sizing:border-box}button,input,textarea{font:inherit}button{cursor:pointer;border:1px solid #cbd0d6;border-radius:5px;padding:5px 9px;background:#fff;color:#202124}button:hover{background:#eef2f5}button[aria-pressed=true],.primary{background:#177a52;color:#fff;border-color:#177a52}nav{display:flex;gap:6px;align-items:center;padding:6px;background:#fff;border:1px solid #ccd2d8;border-radius:6px;box-shadow:0 2px 12px #0002}strong{font-size:12px;max-width:160px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}section{width:min(350px,calc(100vw - 32px));margin-top:6px;padding:12px;background:#fff;border:1px solid #ccd2d8;border-radius:6px;box-shadow:0 2px 12px #0002}textarea{display:block;width:100%;min-height:85px;resize:vertical;padding:7px;border:1px solid #bcc5cd;border-radius:4px;margin:8px 0}code{display:block;overflow-wrap:anywhere;font-size:11px;max-height:50px;overflow:auto}footer{display:flex;gap:8px;align-items:center;justify-content:space-between}label{display:flex;gap:5px;align-items:center;font-size:12px}output{display:block;max-width:350px;overflow-wrap:anywhere;font-size:12px;margin-top:5px}[hidden]{display:none!important}`;
   style.textContent += "nav{max-width:calc(100vw - 32px);flex-wrap:wrap}strong{max-width:120px}";
+  style.textContent += `:host{color:#233b34}button{border-color:#d5e0d9;border-radius:8px;padding:7px 10px;transition:background .12s}button:hover{background:#edf4ef}button:focus-visible,textarea:focus-visible{outline:2px solid #5b9e80;outline-offset:2px}button[aria-pressed=true],.primary{background:#1b7156;border-color:#1b7156;color:#fff}.primary:hover{background:#155d47}nav{gap:5px;padding:8px 10px;border-color:#d6e3da;border-radius:13px;box-shadow:0 6px 28px #153c2820}nav:before{content:'⠿';font-size:20px;color:#9bad9e;margin-right:3px}strong{font-weight:600;margin-right:6px}section{width:min(370px,calc(100vw - 32px));padding:16px;margin-top:8px;border-color:#d6e3da;border-radius:14px;box-shadow:0 10px 35px #153c2820}section:before{content:'页面批注';display:block;font-weight:600;font-size:14px;margin-bottom:10px}code{background:#f2f6f3;color:#62786b;border-radius:6px;padding:6px 8px;max-height:44px}textarea{min-height:108px;max-height:40vh;margin:12px 0;padding:10px;border-color:#d2ded6;border-radius:9px;line-height:1.6}textarea::placeholder{color:#85948b}label{color:#62786b}input{accent-color:#1b7156}footer{gap:12px}output:not(:empty){padding:9px 12px;background:#f3faf5;color:#35644c;border:1px solid #d6e3da;border-radius:9px;box-shadow:0 3px 14px #153c2810}small{display:block;font-size:11px;color:#86958b;margin-top:10px}@media(prefers-reduced-motion:reduce){button{transition:none}}`;
   try {
     const sheet = new CSSStyleSheet(); sheet.replaceSync(style.textContent); root.adoptedStyleSheets = [sheet];
   } catch { root.append(style); }
@@ -32,7 +33,8 @@ export function installAnnotator({ binding, title = "DSH DoYourWeb", active = fa
   screenshot.checked = !!window.__dshAnnotationDraft?.screenshot;
   label.append(screenshot, "附局部截图");
   const save = document.createElement("button"); save.textContent = "加入聊天草稿"; save.className = "primary";
-  footer.append(label, save); panel.append(target, comment, footer);
+  const hint = document.createElement("small"); hint.textContent = "可连续添加多条，回到聊天后按 Enter 发送";
+  footer.append(label, save); panel.append(target, comment, footer, hint);
   const status = document.createElement("output"); status.setAttribute("aria-live", "polite");
   root.append(nav, panel, status);
   document.documentElement.append(host);

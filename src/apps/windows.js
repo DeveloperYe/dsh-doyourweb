@@ -10,7 +10,7 @@ public static class DshVisibleWindows {
         public int pid;
         public string windowId, title, className;
         public bool visible, cloaked, toolWindow, noActivate, minimized, foreground;
-        public int width, height, zOrder;
+        public int x, y, inputX, inputY, width, height, zOrder;
     }
     private delegate bool EnumProc(IntPtr hwnd, IntPtr param);
     [StructLayout(LayoutKind.Sequential)] private struct Rect { public int left, top, right, bottom; }
@@ -25,6 +25,7 @@ public static class DshVisibleWindows {
     [DllImport("user32.dll", EntryPoint="GetWindowLongPtrW")] private static extern IntPtr GetLong64(IntPtr hwnd, int index);
     [DllImport("user32.dll", EntryPoint="GetWindowLongW")] private static extern int GetLong32(IntPtr hwnd, int index);
     [DllImport("dwmapi.dll")] private static extern int DwmGetWindowAttribute(IntPtr hwnd, int attribute, out int value, int size);
+    [DllImport("dwmapi.dll")] private static extern int DwmGetWindowAttribute(IntPtr hwnd, int attribute, out Rect value, int size);
     public static Row[] List() {
         var rows = new List<Row>(); var foreground = GetForegroundWindow(); int order = 0;
         EnumProc callback = delegate(IntPtr hwnd, IntPtr unused) {
@@ -35,11 +36,14 @@ public static class DshVisibleWindows {
             uint pid; GetWindowThreadProcessId(hwnd, out pid);
             var name = new StringBuilder(256); GetClassName(hwnd, name, name.Capacity);
             int cloak = 0; DwmGetWindowAttribute(hwnd, 14, out cloak, 4);
-            Rect box; GetWindowRect(hwnd, out box);
+            Rect legacy, box; GetWindowRect(hwnd, out legacy);
+            if (DwmGetWindowAttribute(hwnd, 9, out box, Marshal.SizeOf(typeof(Rect))) != 0) box = legacy;
             long styles = IntPtr.Size == 8 ? GetLong64(hwnd, -20).ToInt64() : GetLong32(hwnd, -20);
             rows.Add(new Row { pid=(int)pid, windowId=hwnd.ToInt64().ToString(), title=title.ToString(), className=name.ToString(),
                 visible=true, cloaked=cloak!=0, toolWindow=(styles & 0x80)!=0, noActivate=(styles & 0x08000000)!=0,
-                minimized=IsIconic(hwnd), foreground=hwnd==foreground, width=box.right-box.left, height=box.bottom-box.top, zOrder=z });
+                minimized=IsIconic(hwnd) || legacy.left<=-30000 || legacy.top<=-30000,
+                foreground=hwnd==foreground, x=box.left, y=box.top, inputX=legacy.left, inputY=legacy.top,
+                width=box.right-box.left, height=box.bottom-box.top, zOrder=z });
             return true;
         };
         EnumWindows(callback, IntPtr.Zero); return rows.ToArray();
@@ -62,7 +66,7 @@ $processes=@{}
         pid=$p.Id; windowId=$window.windowId; name=$p.ProcessName; title=$window.title;
         path=$p.Path; started=$p.Started; product=$p.Product; displayName=$p.DisplayName;
         visible=$window.visible; cloaked=$window.cloaked; toolWindow=$window.toolWindow; noActivate=$window.noActivate;
-        className=$window.className; width=$window.width; height=$window.height;
+        className=$window.className; x=$window.x; y=$window.y; inputX=$window.inputX; inputY=$window.inputY; width=$window.width; height=$window.height;
         minimized=$window.minimized; foreground=$window.foreground; zOrder=$window.zOrder
     }
 }) | ConvertTo-Json -Compress`;

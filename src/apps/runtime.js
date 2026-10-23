@@ -8,6 +8,7 @@ import path from "node:path";
 import { randomUUID } from "node:crypto";
 import { isDeepStrictEqual } from "node:util";
 import { clip } from "../output.js";
+import { driverData, controlPage } from "./desktop.js";
 
 export class UncertainOperation extends Error {
   constructor(message, cause) { super(message, { cause }); this.mayHaveEffects = true; }
@@ -45,7 +46,7 @@ export function runProcess(command, args = [], { cwd, env, signal, timeout = 300
 }
 
 export class McpConnection {
-  constructor(candidate) { this.candidate = candidate; this.tools = new Map(); this.validators = new Map(); this.client = new Client({ name: "dsh-doyourweb", version: "0.1.5" }); }
+  constructor(candidate) { this.candidate = candidate; this.tools = new Map(); this.validators = new Map(); this.client = new Client({ name: "dsh-doyourweb", version: "0.1.6" }); }
   async connect(signal) {
     const c = this.candidate;
     if (c.url) this.transport = new StreamableHTTPClientTransport(new URL(c.url), { requestInit: { headers: c.headers || {}, redirect: "error" } });
@@ -94,8 +95,20 @@ export class McpConnection {
 
 export async function projectMcpResult(result, captures, limit = 8000) {
   const output = { isError: !!result.isError, content: [], untrusted: true };
-  const structured = result.structuredContent === undefined ? undefined : JSON.stringify(result.structuredContent);
+  const data = driverData(result);
+  const hasControls = Array.isArray(data.elements) || typeof data.snapshot_id === "string";
+  const projected = hasControls ? { ...controlPage(data, 0, Math.max(400, Math.floor(limit * .65))),
+    window_bounds: data.window_bounds, screenshot_width: data.screenshot_width, screenshot_height: data.screenshot_height,
+    degraded: data.degraded, degraded_reason: data.degraded_reason, capture_coverage: data.capture_coverage } : result.structuredContent;
+  const structured = projected === undefined ? undefined : JSON.stringify(projected);
   let remaining = limit;
+  if (!hasControls && typeof data.effect === "string") {
+    output.action = Object.fromEntries(["effect", "route", "delivery", "escalation", "evidence"].filter(k => data[k] !== undefined).map(k => [k, data[k]]));
+  }
+  if (hasControls) {
+    output.state = projected;
+    remaining = Math.max(0, remaining - structured.length);
+  }
   for (const block of (result.content || []).slice(0, 20)) {
     if (block.type === "text") {
       if (structured !== undefined) {
@@ -113,6 +126,6 @@ export async function projectMcpResult(result, captures, limit = 8000) {
       output.content.push({ type: "image", path: file, mimeType: block.mimeType });
     } else if (block.type === "resource_link") output.content.push({ type: "resource", name: clip(block.name || "", 100), uri: clip(block.uri || "", 1000) });
   }
-  if (structured !== undefined) output.structured = clip(structured, Math.max(0, remaining));
+  if (structured !== undefined && !hasControls) output.structured = clip(structured, Math.max(0, remaining));
   return output;
 }

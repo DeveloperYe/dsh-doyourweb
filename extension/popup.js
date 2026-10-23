@@ -5,6 +5,14 @@ const code = document.querySelector("#code");
 const port = document.querySelector("#port");
 const savePort = document.querySelector("#save-port");
 const unpair = document.querySelector("#unpair");
+document.querySelector("#setup").addEventListener("click", async () => {
+  try {
+    const state = await chrome.runtime.sendMessage({ type: "status" });
+    const selectedPort = state.port ?? 43187;
+    if (!Number.isSafeInteger(selectedPort) || selectedPort < 1 || selectedPort > 65535) throw new Error("连接端口无效");
+    await chrome.tabs.create({ url: `http://127.0.0.1:${selectedPort}/setup` });
+  } catch (error) { showError(error); }
+});
 document.querySelector("#file-access").textContent = await chrome.extension.isAllowedFileSchemeAccess()
   ? "已允许引用本地 HTML 页面" : "引用本地 HTML：请在浏览器扩展详情中开启“允许访问文件网址”。";
 
@@ -13,9 +21,10 @@ async function refresh() {
   if (state.error) throw new Error(state.error);
   const waiting = state.pairing !== undefined && !state.stopped;
   enabled.checked = !state.stopped;
-  port.value = String(state.port ?? 43187);
+  if (document.activeElement !== port) port.value = String(state.port ?? 43187);
   unpair.hidden = !state.paired;
   pairing.hidden = !waiting;
+  document.querySelector("#setup").hidden = state.connected;
   code.textContent = state.pairing?.code ?? "";
   status.textContent = waiting ? "\u7b49\u5f85 DSH \u786e\u8ba4\u4e0b\u9762\u7684\u9a8c\u8bc1\u7801"
     : state.connected ? `\u5df2\u8fde\u63a5 \u00b7 ${state.availableTabs} \u4e2a\u6807\u7b7e\u9875 \u00b7 ${state.controlledTabs} \u4e2a\u53d7\u63a7`

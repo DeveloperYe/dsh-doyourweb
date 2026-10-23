@@ -52,6 +52,7 @@ async function configurePort(port) {
   const popup = await browser.newPage();
   try {
     await popup.goto(`chrome-extension://${bridge.id}/popup.html`);
+    await popup.getByText("连接设置", { exact: true }).click();
     await popup.fill("#port", String(port));
     await popup.click("#save-port");
     await popup.waitForFunction(value => document.querySelector("#port")?.value === String(value), port);
@@ -290,6 +291,10 @@ try {
   assert.equal(await reopened.locator("#out").textContent(), "", "selection must not activate the underlying button");
   assert.equal(await reopened.evaluate(() => document.querySelector('[data-dsh-annotation="toolbar"]').shadowRoot), null, "page scripts cannot rewrite the private annotation controls");
   await fillAnnotation("Make this button green");
+  if (process.env.DSH_TEST_ARTIFACTS) {
+    await mkdir(process.env.DSH_TEST_ARTIFACTS, { recursive: true });
+    await reopened.screenshot({ path: path.join(process.env.DSH_TEST_ARTIFACTS, "annotation-edit.png") });
+  }
   await annotationControl('input[type="checkbox"]', element => { element.checked = true; });
   await annotationControl("button.primary", button => button.click());
   assert.equal(annotationMessages.length, 0, "a synthetic website click must not submit a user message");

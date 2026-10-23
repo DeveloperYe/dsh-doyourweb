@@ -289,6 +289,57 @@ test("desktop defaults to bounded text-only reads and stops identical read-only 
   assert.notEqual(fresh.snapshot, first.snapshot); assert.equal(calls.length, 2);
 });
 
+test("desktop control pages and exact-name actions reuse the same driver snapshot", async t => {
+  const data = { snapshot_id: "s0000000d", elements: [{ element_index: 13, element_token: "s0000000d:13", role: "ComboBox", label: "搜索商店" }] };
+  const { service, app, exec, calls, tools } = await desktopFixture(t, async () => ({ structuredContent: data, content: [] }));
+  tools.get("click").inputSchema.properties.snapshot_id = { type: "string" };
+  const state = await service.desktop(app.ref, {}, exec);
+  assert.equal(state.snapshot_id, data.snapshot_id);
+  const page = await service.desktop(app.ref, { tool: "controls", snapshot: state.snapshot, arguments: { offset: 0 } }, exec);
+  assert.equal(page.controls[0].element_token, "s0000000d:13"); assert.equal(calls.length, 1);
+  await service.desktop(app.ref, { snapshot: state.snapshot, tool: "click", arguments: { element: { name: "搜索商店" } } }, exec);
+  assert.equal(calls[1].args.element_token, "s0000000d:13");
+  await assert.rejects(service.desktop(app.ref, { tool: "not_a_tool" }, exec), /Allowed operations and parameters/);
+});
+
+test("background refusal preserves an unconsumed snapshot without an uncertainty lock", async t => {
+  const { service, app, exec, calls } = await desktopFixture(t, async name => name === "click"
+    ? { isError: true, structuredContent: { effect: "refused", route: "synthetic_events" }, content: [] } : { content: [] });
+  const state = await service.desktop(app.ref, {}, exec);
+  const result = await service.desktop(app.ref, { tool: "click", snapshot: state.snapshot }, exec);
+  assert.equal(result.status, "action_refused"); assert.equal(result.input_dispatched, false);
+  assert.equal(result.snapshot, state.snapshot); assert.equal(service.receipts.has(app.ref), false);
+  await service.desktop(app.ref, { tool: "controls", snapshot: result.snapshot }, exec);
+  assert.equal(calls.length, 2, "paging a refusal does not trigger another UIA read");
+});
+
+test("minimized windows cannot dispatch input; focus_window restores and reads a new snapshot", async t => {
+  const { service, app, exec, calls, row } = await desktopFixture(t);
+  const state = await service.desktop(app.ref, {}, exec);
+  row.minimized = true; row.inputX = -32000;
+  await assert.rejects(service.desktop(app.ref, { tool: "click", snapshot: state.snapshot }, exec), /sentinel/);
+  assert.equal(calls.length, 1);
+  service.inventory.showWindow = async () => { row.minimized = false; row.inputX = 100; };
+  const restored = await service.desktop(app.ref, { tool: "focus_window", foreground: false }, exec);
+  assert.notEqual(restored.snapshot, state.snapshot); assert.equal(restored.geometry.minimized, false);
+});
+
+test("type plus Enter and expectation uses one read afterward and returns fresh controls", async t => {
+  let typed = false;
+  const { service, app, exec, calls, tools } = await desktopFixture(t, async name => {
+    if (name === "type_text") typed = true;
+    return { structuredContent: name === "get_window_state" ? { snapshot_id: typed ? "s00000002" : "s00000001",
+      elements: [{ element_index: 13, element_token: typed ? "s00000002:13" : "s00000001:13", role: "ComboBox", label: "搜索商店", value: typed ? "Isaac" : "" }] } : { effect: "confirmed", route: "accessibility" }, content: [] };
+  });
+  for (const name of ["type_text", "press_key"]) tools.set(name, { name, inputSchema: { properties: { pid: { type: "integer" }, window_id: { type: "integer" }, snapshot_id: { type: "string" } } } });
+  const read = await service.desktop(app.ref, {}, exec);
+  const result = await service.type(app.ref, { snapshot: read.snapshot, element_index: 13, text: "Isaac", keys: ["Enter"], expect: { name: "搜索商店", value: "Isaac" } }, exec);
+  assert.equal(result.status, "verified"); assert.equal(result.observation.snapshot_id, "s00000002");
+  assert.deepEqual(calls.map(c => c.name), ["get_window_state", "type_text", "press_key", "get_window_state"]);
+  assert.equal(calls[1].args.snapshot_id, "s00000001"); assert.equal(calls[2].args.key, "Enter");
+  assert.notEqual(result.snapshot, read.snapshot);
+});
+
 test("desktop attempts one bounded automatic launch and never repeats inputs or launch on failure", async t => {
   const { service, app, exec, calls } = await desktopFixture(t);
   let scans = 0, launches = 0;

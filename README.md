@@ -2,7 +2,7 @@
 
 Reference and control your existing, logged-in Chrome and Edge tabs from DeepSeek Harness, with compact page context and batched browser actions.
 
-Version `0.1.3` adds draggable element annotations collected in the chat draft and `@` references to running Windows apps. App control discovers matching MCPs first. Installed local MCPs connect directly; installation requests approval. With no matching MCP, use computer use. Windows are shown when possible while background execution remains available. See [annotations and app control](docs/annotations-and-apps.md#english).
+Version `0.1.6` improves desktop snapshots, input diagnostics and connection UI, and adds `app_type` for text plus key chords. It supports draggable element annotations collected in the chat draft and `@` references to running Windows apps. App control discovers matching MCPs first. Installed local MCPs connect directly; installation requests approval. With no matching MCP, use computer use. Windows are shown when possible while background execution remains available. See [annotations and app control](docs/annotations-and-apps.md#english).
 
 [![CI](https://img.shields.io/github/actions/workflow/status/SheepofSheep/dsh-doyourweb/ci.yml?branch=main&label=CI)](https://github.com/SheepofSheep/dsh-doyourweb/actions/workflows/ci.yml)
 [![License](https://img.shields.io/badge/license-MIT-green)](LICENSE)
@@ -25,7 +25,7 @@ Browser tasks often depend on pages you have already opened and accounts you hav
 
 The project has two parts: a DSH plugin and a companion Manifest V3 extension. The plugin adds browser references to the native `@` and `/` menus; the extension supplies tab metadata and browser control. Once paired, the extension reconnects in the background without keeping its popup open.
 
-Current version: **0.1.3** for both the package and browser extension. See the [changelog](CHANGELOG.md).
+Current version: **0.1.6** for both the package and browser extension. See the [changelog](CHANGELOG.md).
 
 ## 02 · Preview
 

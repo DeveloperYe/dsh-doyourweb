@@ -133,7 +133,9 @@ try {
       const fiber = root.plugin(plugin);
       await fiber.await();
       const setup = await fiber.ctx.browserTabs.setup();
-      assert.equal((await fetch(setup.url)).status, 200);
+      // Each cycle deliberately replaces the listener; do not reuse a pooled
+      // socket belonging to the previous plugin activation.
+      assert.equal((await fetch(setup.url, { headers: { Connection: "close" } })).status, 200);
       await fiber.dispose();
       const released = await openPort(port);
       await closePort(released);
@@ -142,7 +144,7 @@ try {
   }
 } catch (error) {
   failed = true;
-  console.error(error.message);
+  console.error(error.stack, error.cause || "");
 } finally {
   await root.fiber.dispose();
   process.exitCode = failed ? 1 : 0;

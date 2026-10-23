@@ -4,7 +4,7 @@
 
 让 DeepSeek Harness 引用并操作你已经打开、保持登录的 Chrome 和 Edge 页面，用精简的页面上下文和批量操作减少重复读取。
 
-`0.1.3` 新增页面元素批注和 `@` Windows 应用。批注先加入聊天草稿，可积累多条后按 Enter 发送；应用控制先查匹配的 MCP，已安装的本地 MCP 直接连接，缺少时询问安装；未发现 MCP 时使用 computer use。新提出的配置、远程端点和桌面驱动首次连接仍需确认，详见[批注与应用控制](docs/annotations-and-apps.md)。
+`0.1.6` 改善桌面输入、快照句柄与连接界面，新增 `app_type` 打字和快捷键。支持页面元素批注和 `@` Windows 应用。批注先加入聊天草稿，可积累多条后按 Enter 发送；应用控制先查匹配的 MCP，已安装的本地 MCP 直接连接，缺少时询问安装；未发现 MCP 时使用 computer use。新提出的配置、远程端点和桌面驱动首次连接仍需确认，详见[批注与应用控制](docs/annotations-and-apps.md)。
 
 [![CI](https://img.shields.io/github/actions/workflow/status/SheepofSheep/dsh-doyourweb/ci.yml?branch=main&label=CI)](https://github.com/SheepofSheep/dsh-doyourweb/actions/workflows/ci.yml)
 [![License](https://img.shields.io/badge/license-MIT-green)](LICENSE)
@@ -27,7 +27,7 @@
 
 项目由 DSH 插件和配套的 Manifest V3 浏览器扩展组成。插件接入原生 `@`、`/` 菜单，扩展提供标签页信息和控制通道。完成一次配对后，扩展会在后台重连，不必一直打开弹窗。
 
-当前版本为 **0.1.3**，包和浏览器扩展版本一致，变更见[更新记录](CHANGELOG.md)。
+当前版本为 **0.1.6**，包和浏览器扩展版本一致，变更见[更新记录](CHANGELOG.md)。
 
 ## 02 · 功能预览
 
@@ -57,9 +57,10 @@
 | 后台连接 | 保存配对配置、自动重连，并在空闲时释放调试连接。 |
 | 元素批注 | 页面右上角“批注”选择元素，将说明、CSS 选择器、样式、位置和可选局部截图追加到聊天草稿；浮窗可拖动，多条批注一起发送。 |
 | 应用引用 | `@` 搜索运行中的 Windows 窗口，显示程序图标，用进程启动时间和窗口句柄防止旧引用误控新进程。 |
-| MCP / CLI | 优先已知官方接口，查询 MCP Registry 和 npm CLI；支持本机 stdio、Streamable HTTP、自定义连接器和有来源的配置提议。 |
+| MCP / CLI | 默认查询匹配的 MCP；支持本机 stdio、Streamable HTTP、自定义连接器和有来源的配置提议。 |
 | 安装确认 | DSH 原生提问或 `/apps` 本地页面批准安装；固定包版本，npm 禁用安装脚本，关闭重复询问仅限已审阅和信任的来源。 |
 | 桌面回退 | 使用 Cua Driver MCP，默认只读有限控件树、按需截图；尽量显示所选窗口，也支持后台执行，反复读取无变化时停止。 |
+| 键盘输入 | `app_type` 支持文本加 Enter、Tab、Esc 或组合键；可选 `expect` 一次读取校验结果。 |
 | 鼠标操作 | `app_mouse` 支持点击、双击、右键、滚动和拖拽，一次画面读取最多执行 8 个已知目标动作；前台操作单独确认。 |
 
 浏览器输出预算按 JavaScript 字符计算，包含 JSON 转义和元数据；应用工具的 `limit` 限制正文，状态、步骤和图片路径等元数据另计。MCP 不重复返回相同 JSON，CLI 的 stdout 与 stderr 共用正文预算。字符数不等于模型 token 数，输出预算也不限制 DOM 遍历耗时。

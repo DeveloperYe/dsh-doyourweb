@@ -19,6 +19,7 @@ async function fixture(t, options = {}) {
   t.after(() => rm(home, { recursive: true, force: true }));
   const row = { pid: 42, windowId: "123", name: "Fixture", title: "Fixture document", started: "1", path: process.execPath };
   const inventory = new AppInventory({ inventory: async () => [row] });
+  inventory.showWindow = async () => true;
   const [app] = await inventory.list();
   const candidate = { id: "fixture-cli", label: "Fixture CLI", kind: "cli", publisher: "fixture.example", provenance: "official", command: process.execPath, args: [], installed: true };
   const catalog = { cache: new Map(), discover: async () => ({ candidates: [{ ...candidate }], searches: [] }) };
@@ -27,6 +28,25 @@ async function fixture(t, options = {}) {
   await service.load(); await service.discover(app.ref);
   return { home, app, service, candidate, row };
 }
+
+test("app menu hides unopened installed apps and decorates running windows", async t => {
+  const { service } = await fixture(t);
+  service.inventory.list = async () => [{ name: "Closed", installed: true }, { name: "Running", pid: 12, windowId: "34", path: "C:\\Running.exe" }];
+  service.icons = { decorate: async apps => apps.map(app => ({ ...app, icon: "fixture-icon" })) };
+  const rows = await service.list("");
+  assert.deepEqual(rows.map(row => [row.name, row.icon]), [["Running", "fixture-icon"]]);
+});
+
+test("installed MCP connects immediately; missing MCP requests installation; CLI is not a fallback candidate", async t => {
+  const { service, app, candidate } = await fixture(t, { connect: () => ({ connect: async () => {}, close: async () => {}, catalog: () => [], tools: new Map() }) });
+  assert.ok((await service.discover(app.ref)).candidates.every(c => c.kind !== "cli"));
+  candidate.kind = "mcp";
+  await service.discover(app.ref);
+  assert.equal((await service.connect(app.ref, candidate.id, { session: "installed" })).status, "connected");
+  candidate.installed = false;
+  await service.discover(app.ref);
+  assert.equal((await service.connect(app.ref, candidate.id, { session: "missing" })).status, "pending_approval");
+});
 
 test("app references expire on PID/window reuse and plugin restart", async () => {
   let row = { pid: 5, windowId: "9", started: "a", name: "Unity", title: "Editor" };

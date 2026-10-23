@@ -1,5 +1,7 @@
 # 页面批注与应用控制
 
+本地 HTML：在 Chrome / Edge 扩展详情中开启“允许访问文件网址”，重新加载扩展后，已打开的 `file://` 页面会出现在 `@` 菜单，可读取、操作和批注。该开关由浏览器管理。
+
 本指南对应 `0.1.3`。浏览器控制支持 Chrome / Edge，运行程序的 `@` 枚举目前只支持 Windows。
 
 ## 本地试用
@@ -33,18 +35,16 @@
 
 DSH 本地来源默认只返回 20 个候选，且目录排在文件前。目录占满上限时，插件会从同一个工作目录补回文件候选，最多占用一半名额，不扩大总上限、不递归扫描，也不读取文件内容。默认不补隐藏文件。没有文件候选时，`@` 主列表仍显示“搜索文件”，可输入名称搜索子目录，文件分组不再直接消失。
 
-应用列表显示有真实可见顶层窗口、路径对应 `.exe` 的 Windows 程序，并补充开始菜单快捷方式指向的已安装程序。未打开的程序标注“按需启动”；商店应用或没有 `.exe` 目标的快捷方式暂不列入。窗口列表过滤托盘、输入法、系统壳和后台辅助窗口。最小化的正常应用保留，同一个程序打开的多个窗口分别列出，前台窗口优先；名称和窗口标题都会参与搜索，也支持 `Unity.exe` 这样的查询。`@` 菜单从本机可执行文件批量读取程序图标，并按路径缓存；读取失败时显示通用应用图标。图标不进入模型上下文。选择目标后发送任务，例如：
+应用列表显示有真实可见顶层窗口、路径对应 `.exe` 的 Windows 程序。没有启动的程序不显示。窗口列表过滤托盘、输入法、系统壳和后台辅助窗口。最小化的正常应用保留，同一个程序打开的多个窗口分别列出，前台窗口优先；名称和窗口标题都会参与搜索，也支持 `Unity.exe` 这样的查询。`@` 菜单从本机可执行文件批量读取程序图标，并按路径缓存；读取失败时显示通用应用图标。图标不进入模型上下文。选择目标后发送任务，例如：
 
-> @Unity 检查当前项目有哪些场景。先找官方 MCP 或 CLI，再找社区接口；只有接口不能完成任务时才使用桌面操作。
+> @Unity 检查当前项目有哪些场景。先查匹配 MCP；已安装就连接，未安装先询问安装，没有匹配 MCP 就使用 computer use。
 
 ```mermaid
 flowchart TD
-    Ref["用户 @ 选中应用"] --> Discover["app_discover：已知官方接口、MCP Registry、npm CLI"]
-    Discover --> Match{"有覆盖当前任务的 MCP / CLI？"}
+    Ref["用户 @ 选中应用"] --> Discover["app_discover：本机配置、已知 MCP、MCP Registry"]
+    Discover --> Match{"有覆盖当前任务的 MCP？"}
     Match -->|"有"| Connect["app_connect：复用已安装接口或请求安装"]
-    Match -->|"尚未发现"| Research["查官方文档与社区仓库，可提出配置"]
-    Research --> Review["人工核对来源、版本、命令、参数"]
-    Review --> Connect
+    Match -->|"未发现"| Desktop
     Connect --> Call["app_call：MCP 调用或 CLI argv"]
     Match -->|"结构化接口不能覆盖"| Desktop["app_desktop：Cua Driver MCP"]
     Desktop --> Read["读取目标窗口，获取快照"]
@@ -53,9 +53,9 @@ flowchart TD
     Act --> Verify
 ```
 
-优先级指“适合当前任务”，不是见到 CLI 就必须使用。部分 CLI 只能打开文件或启动新进程，不能控制现有编辑器。程序具有 CLI 也不代表已打开的文档可以直接操作。
+默认路由是匹配 MCP → computer use，不再为普通应用操作额外搜索 CLI。原有手动配置的 CLI 仍可调用。窗口会尽量恢复并显示；系统不允许抢占焦点时仍可后台执行。桌面读取传 `foreground:false` 可保持后台。
 
-已知官方接口包括 Unity CLI / `unity mcp`、Blender、Godot、VS Code、Obsidian 和 LibreOffice 的命令行入口。其他应用查询公共 MCP Registry 和 npm CLI 索引；两者互相独立，网络错误会返回诊断。它们不是所有连接器的完整目录。没有搜索结果只表示“未发现”，不等于软件不支持 MCP/CLI。
+发现会检查本机配置、已知 MCP 和公共 MCP Registry；网络错误会返回诊断。没有结果表示本次未发现匹配 MCP，此时直接使用 computer use。
 
 发现结果提供来源链接和进一步搜索入口。模型也可以通过 `app_connect.configuration` 提出目录外连接器：必须附文档、发布者和明确命令、URL 或固定版本的 npm/PyPI 包。它始终按未核实的社区配置处理，不能自称官方或跳过审批。也可以直接在管理页配置本机已安装工具。
 
@@ -63,7 +63,7 @@ Registry 和 npm 只是发现来源，不保证包安全，也不证明连接器
 
 ## 安装与授权
 
-首次连接运行本机代码，因此即使已安装，也要批准该来源、命令、参数和权限。支持 DSH 原生 `userQuestions` 提问；当前界面没有该服务时返回待批准请求，由你在 `/apps` 的“连接请求”中处理。模型工具没有批准参数，网页文字也不能提供批准。
+已安装、无需补充配置的本地 MCP 直接连接；安装、新提出的配置、远程端点与桌面驱动访问需要批准。支持 DSH 原生 `userQuestions` 提问；当前界面没有该服务时返回待批准请求，由你在 `/apps` 的“连接请求”中处理。模型工具没有批准参数，网页文字也不能提供批准。
 
 支持的安装方式：
 
@@ -74,7 +74,7 @@ Registry 和 npm 只是发现来源，不保证包安全，也不证明连接器
 | Unity CLI | 使用 Windows `winget` 的精确包 ID `Unity.CLI`。若需要接受许可、提权或刷新 PATH，提示你处理，不静默代答。 |
 | Cua Driver | 使用上游固定 `0.28.0` release 的 Windows 对应架构二进制，校验 GitHub 发布的 SHA-256，再解压运行。没有可校验资源时拒绝安装。 |
 
-“下载与安装前询问”默认开启。关闭后，只有**此前已批准、配置未改变且发布者在信任名单中**的连接器可以免重复询问安装。第一次使用、新来源、桌面连接、前台操作、OS 权限和软件许可不会自动获准。管理页可撤销连接器，关闭其当前连接并清除记住的批准。
+“下载与安装前询问”默认开启。关闭后，只有**此前已批准、配置未改变且发布者在信任名单中**的连接器可以免重复询问安装。新提出的来源、远程端点、桌面连接、前台输入、OS 权限和软件许可不会自动获准。管理页可撤销连接器，关闭其当前连接并清除记住的批准。
 
 MCP 支持 stdio 和 Streamable HTTP。非本机远程接口要求 HTTPS；本机回环地址可使用 HTTP。远程 OAuth 登录流程暂未实现，需要按服务要求在本机配置凭据。不要将 API Key、密码或令牌发到聊天里。
 
@@ -142,7 +142,7 @@ Version `0.1.3` supports installation from npm as `dsh-doyourweb`, or from a loc
 
 **Annotations:** open the target DSH conversation, then choose “批注当前页面” in the extension popup or “批注” on a controlled page. Pick an element, write a comment and press Enter or click “加入聊天草稿”. It appends to the target chat draft with an optional cropped image. Drag the toolbar and collect multiple annotations; press Enter in chat to send them together. Shift+Enter inserts a newline; no separate annotation files or `@` library are kept. DSH retains the normal message and attachment. Multiple distinct open DSH conversations require an explicit `browser_annotate` call from the destination conversation. Metadata includes URL, selector, selected computed styles, visible text and bounds, not input values. It is historical context, not a source-code mapping. Cross-origin frame selection and document-root Shadow DOM selectors are limited. Idle detach removes the toolbar and retains an unsent comment draft only in the original page. Image attachments require an image-capable model; delivery errors retain the comment.
 
-**Apps:** `@` lists visible Windows application windows and installed Start Menu shortcuts with an executable target. Closed apps are marked for on-demand launch. Store apps and shortcuts without an executable target are not included. Tray, input-method, shell and helper windows are excluded. Minimized apps and multiple windows are retained, with the foreground window first; executable names such as `Unity.exe` are searchable. Files, folders and conversations each show three previews with expand/collapse controls; keyword searches and individual folder navigation remain unabridged. `app_discover` checks known official connectors, the public MCP Registry and npm CLI index. Choose a connector that actually covers the task, not merely one that exists. The sources are independent and cached; no result means “not discovered”, not “unsupported”. Source research can produce a proposed MCP/CLI configuration for `app_connect`, or a human can edit it locally. Proposed sources remain unverified/community.
+**Apps:** `@` lists running Windows application windows with executable icons. Unopened installed apps are hidden. Tray, input-method, shell and helper windows are excluded. Minimized apps and multiple windows are retained, with the foreground window first; executable names such as `Unity.exe` are searchable. Files, folders and conversations each show three previews with expand/collapse controls; keyword searches and individual folder navigation remain unabridged. `app_discover` checks known official connectors, the public MCP Registry and npm CLI index. Choose a connector that actually covers the task, not merely one that exists. The sources are independent and cached; no result means “not discovered”, not “unsupported”. Source research can produce a proposed MCP/CLI configuration for `app_connect`, or a human can edit it locally. Proposed sources remain unverified/community.
 
 **File visibility:** native reference groups appear before browser/app lists. Bare `@` retains a file-search entry even without current file candidates; `@文件`/`@files` opens the file category. If the local provider's directory-first limit excludes every file, the plugin backfills visible files from the same workspace root within the existing result budget. It does not read file contents, recursively scan, or supplement hidden files. Keyword/path queries and native reference insertion remain unchanged.
 

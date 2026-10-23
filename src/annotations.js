@@ -4,7 +4,7 @@ import { clip, serialize } from "./output.js";
 
 export function annotationData(value) {
   if (!value || typeof value !== "object" || typeof value.comment !== "string" || !value.comment.trim()
-    || typeof value.selector !== "string" || !value.selector || !/^https?:\/\//.test(value.url || "")) throw new Error("Invalid annotation");
+    || typeof value.selector !== "string" || !value.selector || !/^(https?|file):\/\//.test(value.url || "")) throw new Error("Invalid annotation");
   const text = name => clip(String(value[name] || ""), name === "comment" ? 4000 : name === "selector" ? 1200 : 600);
   const styles = Object.fromEntries(Object.entries(value.styles || {}).slice(0, 20).map(([key, item]) => [clip(key, 50), clip(String(item), 160)]));
   const rect = Object.fromEntries(["x", "y", "width", "height", "scrollX", "scrollY"].map(key => [key, Number(value.rect?.[key]) || 0]));

@@ -45,9 +45,7 @@ export async function processWindows({ signal } = {}) {
     const { stdout } = await runFile("powershell.exe", ["-NoLogo", "-NoProfile", "-NonInteractive", "-EncodedCommand", Buffer.from(windowsInventory, "utf16le").toString("base64")], { windowsHide: true, timeout: 10000, maxBuffer: 2 * 1024 * 1024, signal });
     const value = stdout.trim() ? JSON.parse(stdout.replace(/^\uFEFF/, "")) : [];
     const windows = usefulWindows(Array.isArray(value) ? value : [value]);
-    const paths = new Set(windows.map(row => row.path.toLowerCase()));
-    const installed = await installedApplications(signal).catch(() => []);
-    return [...windows, ...installed.filter(row => !paths.has(row.path.toLowerCase()))];
+    return windows;
   }
   throw new Error("Running-app inventory currently requires Windows; configure a desktop connector for this platform");
 }
@@ -98,6 +96,24 @@ export class AppInventory {
     if (this.launching.has(ref)) return this.launching.get(ref);
     const job = this.openWindow(ref, signal); this.launching.set(ref, job);
     try { return await job; } finally { this.launching.delete(ref); }
+  }
+  async showWindow(ref, signal) {
+    const app = await this.resolve(ref, signal, { fresh: true });
+    if (process.platform !== "win32" || !/^\d+$/.test(String(app.windowId)) || !Number.isSafeInteger(app.pid)) return false;
+    const script = `Add-Type -TypeDefinition @'
+using System; using System.Runtime.InteropServices;
+public class DshShowWindow {
+ [DllImport("user32.dll")] public static extern uint GetWindowThreadProcessId(IntPtr w, out uint p);
+ [DllImport("user32.dll")] public static extern bool IsIconic(IntPtr w);
+ [DllImport("user32.dll")] public static extern bool ShowWindowAsync(IntPtr w, int c);
+ [DllImport("user32.dll")] public static extern bool SetForegroundWindow(IntPtr w);
+}
+'@
+$w=[IntPtr]::new([long]${app.windowId});[uint32]$p=0
+[void][DshShowWindow]::GetWindowThreadProcessId($w,[ref]$p)
+if($p -eq ${app.pid}) { if([DshShowWindow]::IsIconic($w)){[void][DshShowWindow]::ShowWindowAsync($w,9)};[void][DshShowWindow]::SetForegroundWindow($w) }`;
+    await runFile("powershell.exe", ["-NoLogo", "-NoProfile", "-NonInteractive", "-EncodedCommand", Buffer.from(script, "utf16le").toString("base64")], { windowsHide: true, timeout: 5000, signal });
+    return true;
   }
   async openWindow(ref, signal) {
     const selected = await this.resolve(ref, signal, { window: false });

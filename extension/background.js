@@ -24,7 +24,8 @@ const browser = navigator.userAgent.includes("Edg/") ? "Edge" : "Chrome";
 function send(message, connection = socket) {
   if (connection?.readyState === WebSocket.OPEN) connection.send(JSON.stringify(message));
 }
-function supported(tab) { return !tab.incognito && /^https?:\/\//.test(tab.url || ""); }
+let fileAccess = false;
+function supported(tab) { return !tab.incognito && (/^https?:\/\//.test(tab.url || "") || (fileAccess && /^file:\/\//.test(tab.url || ""))); }
 
 function faviconKey(tab) { return `${tab.url}\n${tab.favIconUrl || ""}`; }
 
@@ -55,6 +56,7 @@ async function inventory() {
   const connection = socket;
   if (!token || connection?.readyState !== WebSocket.OPEN) return;
   const generation = ++inventoryGeneration;
+  fileAccess = await chrome.extension.isAllowedFileSchemeAccess();
   const tabs = (await chrome.tabs.query({})).filter(supported);
   if (socket !== connection || generation !== inventoryGeneration) return;
   availableTabs = tabs.length;
@@ -85,7 +87,8 @@ async function command(message, connection) {
   switch (message.method) {
     case "chrome.debugger.attach": {
       const tab = await chrome.tabs.get(target.tabId);
-      if (!supported(tab)) throw new Error("Only regular HTTP/HTTPS tabs are supported");
+      fileAccess = await chrome.extension.isAllowedFileSchemeAccess();
+      if (!supported(tab)) throw new Error("Use a regular web or local file tab; enable Allow access to file URLs in extension details for local pages");
       if (!attached.has(target.tabId)) {
         await chrome.debugger.attach(target, "1.3");
         if (socket !== connection || stopped) {
@@ -225,7 +228,8 @@ chrome.runtime.onMessage.addListener((message, _sender, respond) => {
     if (message.type === "annotate") {
       if (!token || socket?.readyState !== WebSocket.OPEN || pairing) throw new Error("请先连接 DSH");
       const [tab] = await chrome.tabs.query({ active: true, currentWindow: true });
-      if (!tab || !/^https?:\/\//.test(tab.url || "") || tab.incognito) throw new Error("请选择普通 HTTP/HTTPS 页面");
+      fileAccess = await chrome.extension.isAllowedFileSchemeAccess();
+      if (!tab || !supported(tab)) throw new Error("请选择网页或本地 HTML；本地页面需在扩展详情中开启“允许访问文件网址”");
       send({ method: "dsh.annotation.start", params: { tabId: tab.id } }); respond({ ok: true }); return;
     }
     if (message.type === "status") {

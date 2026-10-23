@@ -5,6 +5,8 @@ const code = document.querySelector("#code");
 const port = document.querySelector("#port");
 const savePort = document.querySelector("#save-port");
 const unpair = document.querySelector("#unpair");
+document.querySelector("#file-access").textContent = await chrome.extension.isAllowedFileSchemeAccess()
+  ? "已允许引用本地 HTML 页面" : "引用本地 HTML：请在浏览器扩展详情中开启“允许访问文件网址”。";
 
 async function refresh() {
   const state = await chrome.runtime.sendMessage({ type: "status" });

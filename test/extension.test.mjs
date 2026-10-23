@@ -45,6 +45,7 @@ function worker(stored = {}, tabs = [], code = bundle.outputFiles[0].text, sessi
   }
   const noop = async () => {};
   const chrome = {
+    extension: { isAllowedFileSchemeAccess: async () => stored.fileAccess === true },
     tabs: { query: async () => tabs, get: async id => tabs.find(tab => tab.id === id),
       onUpdated: event(), onCreated: event(), onRemoved: event(), onActivated: event() },
     debugger: { onEvent: event(), onDetach: event(), attach: noop, detach: async target => detached.push(target.tabId) },
@@ -85,6 +86,18 @@ test("browser startup and alarms wait for saved settings without opening the pop
   const inventory = running.sockets[0].messages.find(message => message.method === "dsh.inventory");
   assert.equal(inventory.params.profile, "saved-profile");
   assert.ok([...running.timers.values()].some(timer => timer.interval && timer.delay === 20000));
+});
+
+test("local tabs require file access and still exclude incognito and internal pages", async () => {
+  for (const allowed of [false, true]) {
+    const running = worker({ fileAccess: allowed }, [
+      { id: 1, url: "file:///D:/weather.html" }, { id: 2, url: "file:///D:/private.html", incognito: true },
+      { id: 3, url: "edge://settings" }, { id: 4, url: "http://localhost:8080" },
+    ]);
+    running.initialize(); await flush(); running.sockets[0].open(); await flush();
+    const rows = running.sockets[0].messages.find(message => message.method === "dsh.inventory").params.tabs;
+    assert.deepEqual(Array.from(rows, row => row.id), allowed ? [1, 4] : [4]);
+  }
 });
 
 test("tab identity survives worker restart but changes with a new browser lifetime", async () => {

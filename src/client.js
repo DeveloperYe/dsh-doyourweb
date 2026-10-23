@@ -38,12 +38,12 @@ export function apply(ctx, { browserIcon, tabIcon, appIcon = browserIcon, applic
     if (result.value.connected === false) return [setupCandidate("\u672a\u8fde\u63a5")];
     const tabs = result.value.tabs.map(tab => ({
       name: tab.title || tab.url,
-      description: `${new URL(tab.url).hostname} - ${tab.browser}`,
+      description: `${new URL(tab.url).protocol === "file:" ? "本地 HTML" : new URL(tab.url).hostname} - ${tab.browser}`,
       icon: tabIcon(tab), section: "\u6807\u7b7e\u9875",
       value: JSON.stringify({ ref: formatMention(tab), label: tab.title || tab.url }),
     }));
     if (slash && matchesSetup) tabs.unshift(setupCandidate("\u8fde\u63a5\u8bbe\u7f6e"));
-    else if (!query && !tabs.length) tabs.push(setupCandidate("\u65e0\u53ef\u7528 HTTP/HTTPS \u6807\u7b7e\u9875"));
+    else if (!query && !tabs.length) tabs.push(setupCandidate("\u65e0\u53ef\u7528 HTTP/HTTPS 或本地 HTML \u6807\u7b7e\u9875"));
     return tabs;
   }
 

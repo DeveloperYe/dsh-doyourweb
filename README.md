@@ -2,7 +2,7 @@
 
 Reference and control your existing, logged-in Chrome and Edge tabs from DeepSeek Harness, with compact page context and batched browser actions.
 
-Version `0.1.3` adds draggable element annotations collected in the chat draft and `@` references to running or installed Windows apps. App control prefers a task-matching official MCP/CLI, then reviewed community connectors, with desktop control as the fallback. First connections and installations require confirmation. See [annotations and app control](docs/annotations-and-apps.md#english).
+Version `0.1.3` adds draggable element annotations collected in the chat draft and `@` references to running Windows apps. App control discovers matching MCPs first. Installed local MCPs connect directly; installation requests approval. With no matching MCP, use computer use. Windows are shown when possible while background execution remains available. See [annotations and app control](docs/annotations-and-apps.md#english).
 
 [![CI](https://img.shields.io/github/actions/workflow/status/SheepofSheep/dsh-doyourweb/ci.yml?branch=main&label=CI)](https://github.com/SheepofSheep/dsh-doyourweb/actions/workflows/ci.yml)
 [![License](https://img.shields.io/badge/license-MIT-green)](LICENSE)
@@ -45,7 +45,7 @@ There is no public hosted demo. After the DSH plugin starts, its default local c
 
 | Feature | Current behavior |
 | --- | --- |
-| Existing tabs | Reuses regular HTTP/HTTPS tabs and their login state in Chrome and Edge. |
+| Existing tabs | Reuses regular HTTP/HTTPS and authorized local file:// tabs and their login state in Chrome and Edge. |
 | Native references | Lists page titles, sites and icons through DSH's `@` and `/` menus. |
 | Compact reading | Accessibility snapshots support selector/query narrowing and cursor pagination. Initial reference context shares a default 2,400-character budget. |
 | Batched actions | Runs up to 12 typed actions per call; stops on failure or navigation. |
@@ -182,7 +182,7 @@ When multiple tabs are authorized, pass the selected tab's reference as `tab`.
 After installing or upgrading, fully exit DSH from the system tray, restart it, and reload the browser extension. For local development, build this working tree and install its absolute directory path. Do not enable the npm copy and local copy on the same port.
 
 - **Annotations:** choose “批注当前页面” in the extension popup, or ask DSH to enable annotations on a referenced tab. Pick an element, write a comment, then press Enter or click “加入聊天草稿”. It appends to the target chat draft with an optional image attachment. Drag the toolbar as needed, collect multiple annotations, then press Enter in chat to send them together. Shift+Enter inserts a newline. The plugin keeps no annotation files or library. Controlled pages also show a top-right annotation button.
-- **Apps:** select a running or installed application with `@Unity` or another program name. DSH discovers connectors with `app_discover`, requests connection/installation through `app_connect`, then invokes MCP tools or CLI arguments with `app_call`. A connector found outside discovery can be proposed with its source documentation for human review.
+- **Apps:** select a running application with `@Unity` or another program name. DSH discovers connectors with `app_discover`, requests connection/installation through `app_connect`, then invokes MCP tools or CLI arguments with `app_call`. A connector found outside discovery can be proposed with its source documentation for human review.
 - **Management:** `/apps` opens the local application, connector and approval manager. It need not remain open. Files, folders and conversations in `@` each show three previews with expand/collapse controls; individual folders retain native navigation.
 - **Fallback:** `app_desktop` uses upstream Cua Driver when structured tools cannot cover the task. Default reads return bounded controls without screenshots. Use `screenshot: true` only for visual grounding; `app_mouse` then supports up to 8 known-target clicks, scrolls or drags without intermediate captures. Missing windows and repeated inspections return `stop: true`. It does not bypass OS permissions.
 
@@ -272,13 +272,13 @@ CI is configured for unit tests on Windows and Linux, plus isolated headless Chr
 
 ### Roadmap
 
-Version `0.1.3` includes page annotations, app references and MCP/CLI-first app control. Further work focuses on real-application compatibility and connector configuration. No release date is promised. Report bugs and discuss changes in [Issues](https://github.com/SheepofSheep/dsh-doyourweb/issues).
+Version `0.1.3` includes page annotations, app references and MCP-first app control. Further work focuses on real-application compatibility and connector configuration. No release date is promised. Report bugs and discuss changes in [Issues](https://github.com/SheepofSheep/dsh-doyourweb/issues).
 
 ### FAQ
 
 **Do I have to open the extension every time?** No. Pair once; the extension reconnects in the background. Reload it after updating its files.
 
-**Why are some pages missing?** Only regular HTTP/HTTPS tabs are exposed. Browser-internal and incognito pages are excluded. Check that the extension is enabled and paired if no tabs appear.
+**Why are some pages missing?** Only regular HTTP/HTTPS and authorized local file:// tabs are exposed. Browser-internal and incognito pages are excluded. Check that the extension is enabled and paired if no tabs appear.
 
 **What if port 43187 is already in use?** Avoid activating two plugin copies on the same port. Stop the duplicate bridge or change the plugin's `port` setting and reconnect the extension to that port.
 

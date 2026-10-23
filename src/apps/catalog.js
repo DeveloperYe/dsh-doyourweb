@@ -66,7 +66,7 @@ export class ConnectorCatalog {
   constructor({ fetcher = fetch, custom = () => [], home, find = findExecutable } = {}) {
     this.fetcher = fetcher; this.custom = custom; this.home = home; this.find = find; this.cache = new Map();
   }
-  async discover(app, { refresh = false, signal } = {}) {
+  async discover(app, { refresh = false, signal, mcpOnly = false } = {}) {
     const term = app.name.replace(/\.exe$/i, "").replace(/[-_]?\d+(?:\.\d+)*/g, "").trim();
     const candidates = [];
     for (const item of CATALOG.filter(item => item.match.test(term) || item.match.test(app.product || ""))) {
@@ -80,7 +80,7 @@ export class ConnectorCatalog {
         try { const item = validateConnector(row); candidates.push({ ...item, installed: !!item.url || !!await this.find(item.command || "") }); } catch { /* Invalid saved entries remain visible in management diagnostics. */ }
       }
     }
-    const key = term.toLowerCase(); let error;
+    const key = `${term.toLowerCase()}:${mcpOnly}`; let error;
     if (term.length >= 2) {
       if (refresh || !this.cache.has(key) || Date.now() - this.cache.get(key).time > (this.cache.get(key).error ? 30000 : 3600000)) {
         try {
@@ -88,7 +88,7 @@ export class ConnectorCatalog {
           const request = url => Promise.resolve().then(() => this.fetcher(url, { signal: AbortSignal.any([AbortSignal.timeout(8000), ...(signal ? [signal] : [])]) }));
           const [registryRequest, cliRequest] = await Promise.allSettled([
             request(`https://registry.modelcontextprotocol.io/v0.1/servers?search=${encodeURIComponent(term)}&limit=50`),
-            request(`https://registry.npmjs.org/-/v1/search?text=${encodeURIComponent(`${term} cli`)}&size=10`),
+            mcpOnly ? Promise.resolve({ ok: true, text: async () => '{"objects":[]}' }) : request(`https://registry.npmjs.org/-/v1/search?text=${encodeURIComponent(`${term} cli`)}&size=10`),
           ]);
           signal?.throwIfAborted();
           try {

@@ -35,6 +35,8 @@ test("tab identities round-trip and mentions cannot change Markdown structure", 
   assert.throws(() => tabRef("bad/profile", 42));
   assert.equal(canControl("edge://settings"), false);
   assert.equal(canControl("https://example.com"), true);
+  assert.equal(canControl("file:///D:/downloads/weather.html"), true);
+  assert.equal(canControl("javascript:alert(1)"), false);
   assert.equal(sameSecret("x", "xy"), false);
   assert.equal(sameSecret("xy", "xy"), true);
   assert.match(extensionId(Buffer.from("test").toString("base64")), /^[a-p]{32}$/);

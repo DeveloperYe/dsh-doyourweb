@@ -184,7 +184,7 @@ export class BrowserEngine {
           checkpoint(signal);
           attempted = !["wait", "extract"].includes(step.op);
           if (step.op === "navigate") {
-            if (!canControl(step.value)) throw new Error("Only HTTP/HTTPS navigation is supported");
+            if (!canControl(step.value)) throw new Error("Only HTTP/HTTPS or local file navigation is supported");
             await page.goto(step.value, { waitUntil: "domcontentloaded", signal });
           } else if (step.op === "back") await page.goBack({ waitUntil: "domcontentloaded", signal });
           else if (step.op === "forward") await page.goForward({ waitUntil: "domcontentloaded", signal });

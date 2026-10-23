@@ -3,6 +3,7 @@ import { createServer } from "node:http";
 import { mkdtemp, readFile, rm, mkdir } from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
+import { pathToFileURL } from "node:url";
 import assert from "node:assert/strict";
 import { BrowserBridge } from "../src/bridge.js";
 import { BrowserEngine } from "../src/engine.js";
@@ -115,6 +116,18 @@ try {
   assert.equal(image.readUInt32BE(16), 16);
   assert.equal(image.readUInt32BE(20), 16);
   const engine = new BrowserEngine(bridge, { artifactDir: path.join(home, "captures") });
+  const local = await browser.newPage();
+  const localUrl = pathToFileURL(path.resolve("test/fixtures/webmcp.html")).href;
+  await local.goto(localUrl);
+  let localTab;
+  for (let i = 0; i < 50 && !localTab; i++) {
+    localTab = bridge.list().find(item => item.url === localUrl);
+    if (!localTab) await new Promise(resolve => setTimeout(resolve, 100));
+  }
+  assert.ok(localTab, "file HTML must appear in extension inventory when file access is enabled");
+  const localRead = await engine.read(localTab.ref);
+  assert.ok(localRead.snapshot, "local HTML can be read through CDP");
+  await local.close();
   const initial = await engine.read(tab.ref);
   const nameRef = initial.content.match(/textbox "Name" \[ref=(e\d+)\]/)?.[1];
   const saveRef = initial.content.match(/button "Save" \[ref=(e\d+)\]/)?.[1];

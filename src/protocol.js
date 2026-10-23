@@ -26,7 +26,7 @@ export function formatMention(tab) {
 }
 
 export function canControl(url) {
-  try { return ["https:", "http:"].includes(new URL(url).protocol); } catch { return false; }
+  try { return ["https:", "http:", "file:"].includes(new URL(url).protocol); } catch { return false; }
 }
 
 function isPlainObject(value) {

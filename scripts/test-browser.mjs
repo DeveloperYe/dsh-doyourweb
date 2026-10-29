@@ -52,9 +52,19 @@ async function configurePort(port) {
   const popup = await browser.newPage();
   try {
     await popup.goto(`chrome-extension://${bridge.id}/popup.html`);
+    // popup.js awaits chrome.extension.isAllowedFileSchemeAccess() before it wires
+    // its buttons, so a click issued before that lands on a dead handler. The
+    // endpoint label only appears after the popup's first refresh() has completed.
+    await popup.waitForFunction(() => (document.querySelector("#endpoint")?.textContent || "").includes("://"), null, { timeout: 15000 });
     await popup.getByText("连接设置", { exact: true }).click();
     await popup.fill("#port", String(port));
+    const applied = () => popup.waitForFunction(value => (document.querySelector("#endpoint")?.textContent || "").includes(`:${value}/`), port, { timeout: 5000 });
     await popup.click("#save-port");
+    await applied().catch(async () => {
+      // The first click can still race the module's wiring: retry once, loudly.
+      await popup.click("#save-port");
+      await applied();
+    });
     await popup.waitForFunction(value => document.querySelector("#port")?.value === String(value), port);
   } finally { await popup.close(); }
 }

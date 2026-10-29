@@ -56,7 +56,9 @@ export async function apply(ctx, config = {}) {
   });
   const home = path.join(config.home || process.env.DSH_HOME || path.join(os.homedir(), ".dsh"), "browser-tabs");
   const bridge = new BrowserBridge({ home, port: config.port || 43187, idleTimeoutMs: config.idleTimeoutMs || 120000,
-    bind: config.bind || "127.0.0.1", hosts: config.hosts || [], remote: config.remote === true });
+    bind: config.bind || "127.0.0.1", hosts: config.hosts || [], remote: config.remote === true,
+    extensionScheme: config.extensionScheme || "ws", extensionPort: config.extensionPort,
+    extensionProfiles: config.profiles || [], autoBuild: config.autoBuild !== false });
   await ctx.effect(async () => {
     try { await bridge.start(); }
     catch (error) { await bridge.close(); throw error; }
@@ -74,6 +76,9 @@ export async function apply(ctx, config = {}) {
   bridge.decoratePage = (ref, page) => annotations.attach(ref, page);
   bridge.beforeRelease = ref => annotations.detach(ref);
   const managementUrl = `http://127.0.0.1:${bridge.port}/manage`;
+  /** Generated extensions plus the loopback download link for each one. */
+  const decorateExtensions = source => (source.extensionBuilds || []).map(entry => ({ ...entry,
+    download: `http://127.0.0.1:${source.port}/extension.zip?p=${encodeURIComponent(entry.key)}` }));
   const applications = new Applications({ home: path.join(home, "applications"), managementUrl,
     ask: request => {
       const questions = ctx.get?.("userQuestions");
@@ -100,6 +105,9 @@ export async function apply(ctx, config = {}) {
       case "template": return applications.template(request.ref, request.connector);
       case "revoke": return applications.revoke(request.id);
       case "link": return { token: bridge.settings.token, endpoint: bridge.endpointDescription(), bind: bridge.bind, hosts: bridge.hosts, port: bridge.port };
+      case "extensions": return { builds: decorateExtensions(bridge), error: bridge.extensionBuildError, outDir: bridge.extensionOutDir, version: bridge.version };
+      case "rebuild": await bridge.buildExtensions({ force: true }); bridge.extensionBuildError = undefined;
+        return { builds: decorateExtensions(bridge), outDir: bridge.extensionOutDir, version: bridge.version };
       default: throw new Error("Unknown management action");
     }
   };

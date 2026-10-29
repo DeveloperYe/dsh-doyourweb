@@ -8,6 +8,7 @@ import { WebSocketServer, WebSocket } from "ws";
 import { chromium } from "playwright-core";
 import { BrowserModel } from "./vendor/browser-model.js";
 import { extensionId, Pairings, pinnedExtensionId } from "./pairing.js";
+import { buildExtension, configFingerprint, extensionProfiles, generateManifestKey, zipDirectory } from "./extension-build.js";
 import { canControl, parseRef, tabRef } from "./protocol.js";
 import { managementPage } from "./manage.js";
 
@@ -23,13 +24,20 @@ function escapeHtml(value) {
 }
 
 export class BrowserBridge extends EventEmitter {
-  constructor({ home, port = 43187, extensionSource, idleTimeoutMs = 120000, bind = "127.0.0.1", hosts = [], remote = false } = {}) {
+  constructor({ home, port = 43187, extensionSource, idleTimeoutMs = 120000, bind = "127.0.0.1", hosts = [], remote = false,
+    extensionScheme = "ws", extensionPort, extensionProfiles: profiles = [], autoBuild = true } = {}) {
     super();
     this.home = home;
     this.port = port;
     this.bind = String(bind || "127.0.0.1");
     this.hosts = (Array.isArray(hosts) ? hosts : []).map(entry => String(entry).trim().toLowerCase()).filter(Boolean);
     this.remote = remote === true;
+    this.extensionScheme = extensionScheme === "wss" ? "wss" : "ws";
+    this.extensionPort = extensionPort;
+    this.extensionProfilesConfig = Array.isArray(profiles) ? profiles : [];
+    this.autoBuild = autoBuild !== false;
+    this.extensionOutDir = path.join(home || ".", "extensions");
+    this.extensionBuilds = [];
     this.extensionSource = extensionSource || path.resolve(path.dirname(fileURLToPath(import.meta.url)), "../extension");
     this.profiles = new Map();
     this.relays = new Map();
@@ -96,17 +104,60 @@ export class BrowserBridge extends EventEmitter {
     if (!/^[0-9a-f]{64}$/.test(this.settings.token ?? "")) {
       throw new Error("pairing.json has no usable token; delete it and restart the plugin to pair the extension again");
     }
+    // Every installation gets its own manifest key, so the generated extension has
+    // an id nobody else can claim and the stock template keeps working as a fallback.
+    if (typeof this.settings.key !== "string" || !this.settings.key.length) {
+      this.settings.key = generateManifestKey();
+      await writeFile(settingsPath, JSON.stringify(this.settings), { mode: 0o600 });
+    }
     this.extensionPath = this.extensionSource;
     this.manifest = JSON.parse(await readFile(path.join(this.extensionSource, "manifest.json"), "utf8"));
     this.id = pinnedExtensionId(this.manifest);
-    // Installations created before 0.1.3 loaded a generated copy pinned to a
-    // per-install key; keep accepting that origin so they keep working.
-    this.legacyId = typeof this.settings.key === "string" && this.settings.key.length ? extensionId(this.settings.key) : undefined;
+    this.installId = extensionId(this.settings.key);
+    try { this.version = JSON.parse(await readFile(new URL("../package.json", import.meta.url), "utf8")).version; }
+    catch { this.version = this.manifest.version; }
   }
 
   /** Whether a WebSocket origin may talk to this bridge at all. */
   trustedOrigin(origin) {
-    return origin === `chrome-extension://${this.id}` || (this.legacyId !== undefined && origin === `chrome-extension://${this.legacyId}`);
+    return origin === `chrome-extension://${this.id}` || origin === `chrome-extension://${this.installId}`;
+  }
+
+  /** Endpoints this install can hand out as ready-made extensions. */
+  extensionProfiles() {
+    return extensionProfiles({ bind: this.bind, port: this.port, hosts: this.hosts,
+      scheme: this.extensionScheme, publicPort: this.extensionPort, profiles: this.extensionProfilesConfig });
+  }
+
+  /**
+   * Materialise one loadable extension per endpoint under `<home>/extensions`, plus
+   * a zip for each so the folder can be copied to another machine. Rebuilds only
+   * when the endpoint set, the token or the version changed, unless forced.
+   */
+  async buildExtensions({ force = false } = {}) {
+    const profiles = this.extensionProfiles();
+    const markerPath = path.join(this.extensionOutDir, "build.json");
+    const fingerprint = configFingerprint({ profiles: profiles.map(({ key, host, port, scheme }) => ({ key, host, port, scheme })),
+      token: this.settings.token, key: this.settings.key, version: this.version });
+    if (!force) {
+      try {
+        const marker = JSON.parse(await readFile(markerPath, "utf8"));
+        if (marker.fingerprint === fingerprint) { this.extensionBuilds = marker.builds; return this.extensionBuilds; }
+      } catch { /* Nothing built yet. */ }
+    }
+    await mkdir(this.extensionOutDir, { recursive: true });
+    const builds = [];
+    for (const profile of profiles) {
+      const dir = path.join(this.extensionOutDir, profile.key);
+      const built = await buildExtension({ source: this.extensionSource, outDir: dir, profile,
+        token: this.settings.token, key: this.settings.key, version: this.version });
+      const zip = await zipDirectory(dir, path.join(this.extensionOutDir, `${profile.key}.zip`));
+      builds.push({ key: profile.key, label: profile.label, endpoint: built.endpoint, dir, zip: zip.file,
+        entries: zip.entries, bytes: zip.bytes, id: this.installId });
+    }
+    await writeFile(markerPath, JSON.stringify({ fingerprint, builtAt: new Date().toISOString(), builds }), { mode: 0o600 });
+    this.extensionBuilds = builds;
+    return builds;
   }
 
   /**
@@ -146,7 +197,7 @@ export class BrowserBridge extends EventEmitter {
     if (!this.localBind() && !this.remote) {
       throw new Error(`Refusing to listen on ${this.bind}: set "remote: true" in the plugin settings to accept browser connections from other machines, and list every hostname the extensions will use in "hosts".`);
     }
-    this.server = http.createServer((request, response) => this.handleHttp(request, response));
+    this.server = http.createServer((request, response) => { void this.handleHttp(request, response); });
     this.ws = new WebSocketServer({ noServer: true, maxPayload: 8 * 1024 * 1024 });
     this.server.on("upgrade", (request, socket, head) => this.handleUpgrade(request, socket, head));
     await new Promise((resolve, reject) => {
@@ -158,6 +209,12 @@ export class BrowserBridge extends EventEmitter {
     });
     this.port = this.server.address().port;
     this.url = `http://127.0.0.1:${this.port}/setup`;
+    // Ready-to-load copies for every configured endpoint. Failure here must not
+    // stop the bridge: the stock folder plus PIN pairing still work without them.
+    if (this.autoBuild) {
+      try { await this.buildExtensions(); }
+      catch (error) { this.extensionBuildError = error.message; }
+    }
   }
 
   /** Hand the token to the extension whose pairing request the user approved. */
@@ -187,7 +244,7 @@ export class BrowserBridge extends EventEmitter {
     } }));
   }
 
-  handleHttp(request, response) {
+  async handleHttp(request, response) {
     if (!this.hostAllowed(request.headers.host)) { response.writeHead(403).end(); return; }
     const pathname = new URL(request.url, "http://127.0.0.1").pathname;
     // Management, pairing and setup stay local to this machine even when the
@@ -206,6 +263,20 @@ export class BrowserBridge extends EventEmitter {
         "Set-Cookie": `dsh_manage=${this.setupKey}; HttpOnly; SameSite=Strict; Path=/`,
         "Content-Security-Policy": `default-src 'none'; connect-src 'self'; style-src 'unsafe-inline'; script-src 'nonce-${nonce}'; base-uri 'none'; frame-ancestors 'none'` });
       response.end(html); return;
+    }
+    if (pathname === "/extension.zip") {
+      // Hand the generated, already-paired extension to the user's browser. Local
+      // only: the file carries the pairing token.
+      const key = new URL(request.url, "http://127.0.0.1").searchParams.get("p") ?? "";
+      const build = (this.extensionBuilds || []).find(entry => entry.key === key);
+      if (!build) { response.writeHead(404).end(); return; }
+      try {
+        const bytes = await readFile(build.zip);
+        response.writeHead(200, { "Content-Type": "application/zip", "Content-Length": bytes.length, "Cache-Control": "no-store",
+          "Content-Disposition": `attachment; filename="dsh-doyourweb-${key}.zip"` });
+        response.end(bytes);
+      } catch { response.writeHead(404).end(); }
+      return;
     }
     if (pathname !== "/setup") { response.writeHead(404).end(); return; }
     // The CSP nonce is minted per response: the only script the page may run is the
@@ -249,7 +320,16 @@ export class BrowserBridge extends EventEmitter {
       <p class="hint">有 ${pending.length} 条待确认请求。只输入你自己浏览器图标上显示的数字。</p>` : "";
     const copy = (label, value) => `<button type="button" class="copy" data-copy="${escapeHtml(value)}">${label}</button>`;
     const connected = this.profiles.size > 0;
-    const install = `<div class="step"><span class="number">1</span><div><h2>添加浏览器扩展</h2><p>打开扩展管理页，启用开发者模式，选择「加载解压的扩展」。</p><div class="actions">${copy("复制 Edge 管理页地址", "edge://extensions")}${copy("复制 Chrome 管理页地址", "chrome://extensions")}</div><div class="path"><code>${escapeHtml(this.extensionPath)}</code>${copy("复制扩展目录路径", this.extensionPath)}</div><p class="hint">将目录路径粘贴到文件选择框；macOS 可按 ⇧⌘G。已安装可直接进行下一步。</p></div></div>`;
+    // The generated copies are the primary path: endpoint and token are already
+    // inside, so loading the folder is the whole setup. The template folder plus a
+    // pairing PIN remains as the fallback for a hand-copied installation.
+    const builds = this.extensionBuilds || [];
+    const downloads = builds.map(build => `<a href="/extension.zip?p=${encodeURIComponent(build.key)}" download>&#19979;&#36733; ${escapeHtml(build.label)}</a>`).join("");
+    const install = `<div class="step"><span class="number">1</span><div><h2>&#23433;&#35013;&#27983;&#35272;&#22120;&#25193;&#23637;</h2>
+      ${builds.length ? `<p>&#19979;&#36733;&#19982;&#26412;&#26426;&#37197;&#32622;&#21305;&#37197;&#30340;&#25193;&#23637;&#65292;&#35299;&#21387;&#21518;&#29992;&#12300;&#21152;&#36733;&#35299;&#21387;&#30340;&#25193;&#23637;&#12301;&#36873;&#20013;&#35813;&#30446;&#24405;&#21363;&#21487;&#65292;&#22320;&#22336;&#21644;&#37197;&#23545;&#20196;&#29260;&#24050;&#20869;&#32622;&#12290;</p><div class="actions">${downloads}</div><div class="path"><code>${escapeHtml(builds[0].dir)}</code>${copy("&#22797;&#21046;&#25193;&#23637;&#30446;&#24405;&#36335;&#24452;", builds[0].dir)}</div>`
+        : `<p class="hint">&#25193;&#23637;&#23578;&#26410;&#29983;&#25104;&#65306;${escapeHtml(this.extensionBuildError || "&#37325;&#21551;&#25554;&#20214;&#21518;&#20250;&#29983;&#25104;")}</p>`}
+      <details><summary>&#25163;&#21160;&#26041;&#24335;&#65288;&#27169;&#26495;&#30446;&#24405; + &#37197;&#23545;&#30721;&#65289;</summary><p>&#20063;&#21487;&#20197;&#30452;&#25509;&#21152;&#36733;&#20179;&#24211;&#37324;&#30340;&#27169;&#26495;&#30446;&#24405;&#65292;&#20877;&#25353;&#31532; 2 &#27493;&#36755;&#20837;&#25193;&#23637;&#22270;&#26631;&#19978;&#30340; 4 &#20301;&#39564;&#35777;&#30721;&#12290;</p><div class="path"><code>${escapeHtml(this.extensionPath)}</code>${copy("&#22797;&#21046;&#27169;&#26495;&#30446;&#24405;&#36335;&#24452;", this.extensionPath)}</div></details>
+      <p class="hint">&#19979;&#36733;&#21518;&#22312; <code>edge://extensions</code> / <code>chrome://extensions</code> &#25171;&#24320;&#24320;&#21457;&#32773;&#27169;&#24335;&#65307;zip &#38656;&#35201;&#20808;&#35299;&#21387;&#12290;&#30446;&#24405;&#37324;&#24102;&#30528;&#37197;&#23545;&#20196;&#29260;&#65292;&#31561;&#21516;&#20110;&#23494;&#30721;&#65292;&#19981;&#35201;&#22806;&#20256;&#12290;</p></div></div>`;
     const body = `<main><header><div class="mark">↗</div><div><p class="eyebrow">DSH / BROWSER</p><h1>连接你的浏览器</h1></div><span class="badge ${connected ? "online" : ""}">${connected ? "已连接" : pending.length ? "待确认" : "等待连接"}</span></header>
       <p class="intro">让聊天接着你的网页工作。保留登录状态，在对话中用 @ 选择页面。</p>
       ${connected ? `<section class="success"><h2>连接已就绪</h2><p>回到 DSH，在输入框键入 <kbd>@</kbd>，选择需要使用的标签页。</p><p class="hint">已连接 ${this.profiles.size} 个浏览器配置。需要标注页面时，打开扩展并点击「批注当前页面」。</p></section><details><summary>连接另一个浏览器</summary>${install}</details>` : `<section class="card">${pending.length ? `<details><summary>扩展已发来请求 · 查看安装步骤</summary>${install}</details>` : install}</section>`}

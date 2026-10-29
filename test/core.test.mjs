@@ -93,8 +93,14 @@ test("the bridge never writes into the loadable extension folder", async () => {
     assert.equal(bridge.trustedOrigin("https://example.com"), false);
     // Only the token is stored, and it never travels to the browser as a file.
     const settings = JSON.parse(await readFile(path.join(home, "pairing.json"), "utf8"));
-    assert.deepEqual(Object.keys(settings), ["token"]);
+    // The token plus a per-installation manifest key: the generated extension gets
+    // an id nobody else can claim, and the shipped template keeps its own.
+    assert.deepEqual(Object.keys(settings).sort(), ["key", "token"]);
     assert.match(settings.token, /^[0-9a-f]{64}$/);
+    assert.match(settings.key, /^MII[A-Za-z0-9+/=]+$/);
+    assert.equal(bridge.installId, extensionId(settings.key));
+    assert.notEqual(bridge.installId, bridge.id);
+    assert.equal(bridge.trustedOrigin(`chrome-extension://${bridge.installId}`), true);
     assert.equal(await readFile(path.join(source, "config.js"), "utf8"), before.get("config.js"));
   } finally {
     await bridge.close();

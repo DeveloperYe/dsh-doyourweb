@@ -1,5 +1,15 @@
 # 更新记录
 
+## 0.2.0 · 2026-10-30（DeveloperYe fork）
+
+- 通用化：插件启动时按当前配置生成**可直接加载的浏览器扩展**（每个端点一份目录 + zip），里面已写入协议/主机/端口与配对令牌，加载即已连接，不再需要配对码或手填设置。
+- 每次安装生成独立的 manifest key（存于 `pairing.json`），生成的扩展有专属 id；仓库里的模板目录仍可用 4 位 PIN 配对作为后备。
+- 新增 `extensionScheme` / `extensionPort` / `profiles` / `autoBuild` 配置；端点由 `bind`、`hosts`、`profiles` 推导，通配 bind 不单独生成。
+- 连接页第 1 步改为「下载与你配置匹配的扩展」，`/manage` 新增「浏览器扩展」标签页（下载 zip、复制目录、重新生成全部）。
+- 新增 `GET /extension.zip?p=<profile>`（仅环回）：远程来源一律 404，因为文件里带令牌。
+- 配置/令牌/版本变化时自动重建，未变化时用 `build.json` 指纹跳过；重建失败不影响 PIN 配对。
+- 测试：新增 `test/extension-build.test.mjs`（key 派生、端点推导、生成的目录内容、zip 可解压并用系统 tar 交叉校验、下载仅环回）；修掉浏览器集成测试里 popup 顶层 await 造成的配对偶发失败。
+
 ## 0.1.7 · 2026-10-30（DeveloperYe fork）
 
 - 新增远程浏览器：`bind` / `hosts` / `remote` 三个配置项，非环回监听必须显式开启 `remote: true` 并逐条列出允许的 Host 头。

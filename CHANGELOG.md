@@ -8,6 +8,7 @@
 - 连接页第 1 步改为「下载与你配置匹配的扩展」，`/manage` 新增「浏览器扩展」标签页（下载 zip、复制目录、重新生成全部）。
 - 新增 `GET /extension.zip?p=<profile>`（仅环回）：远程来源一律 404，因为文件里带令牌。
 - 配置/令牌/版本变化时自动重建，未变化时用 `build.json` 指纹跳过；重建失败不影响 PIN 配对。
+- 新增 `npm run test:generated`：真 Chromium 加载生成的目录，验证「加载即连上、无需配对」。
 - 测试：新增 `test/extension-build.test.mjs`（key 派生、端点推导、生成的目录内容、zip 可解压并用系统 tar 交叉校验、下载仅环回）；修掉浏览器集成测试里 popup 顶层 await 造成的配对偶发失败。
 
 ## 0.1.7 · 2026-10-30（DeveloperYe fork）

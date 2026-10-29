@@ -68,7 +68,8 @@
     "verify:dsh": "node scripts/verify-dsh-contract.mjs",
     "prepack": "npm run build",
     "icons": "node scripts/generate-icons.mjs",
-    "screenshot": "node scripts/generate-setup-screenshot.mjs"
+    "screenshot": "node scripts/generate-setup-screenshot.mjs",
+    "test:generated": "node scripts/test-generated-extension.mjs"
   },
   "dependencies": {
     "@modelcontextprotocol/sdk": "1.32.1",

@@ -19,6 +19,8 @@
 
 *本地配对页面：将浏览器扩展连接到 DSH 插件，保留现有标签页和登录状态。*
 
+> **本 fork**（[DeveloperYe/dsh-doyourweb](https://github.com/DeveloperYe/dsh-doyourweb)）新增远程浏览器支持，并收紧了本机管理面：另一台电脑上的 Chrome/Edge 也能接入。见 [docs/remote-browser.md](docs/remote-browser.md)。
+
 ---
 
 ## 01 · 项目介绍
@@ -27,7 +29,7 @@
 
 项目由 DSH 插件和配套的 Manifest V3 浏览器扩展组成。插件接入原生 `@`、`/` 菜单，扩展提供标签页信息和控制通道。完成一次配对后，扩展会在后台重连，不必一直打开弹窗。
 
-当前版本为 **0.1.6**，包和浏览器扩展版本一致，变更见[更新记录](CHANGELOG.md)。
+当前版本为 **0.1.7**，包和浏览器扩展版本一致，变更见[更新记录](CHANGELOG.md)。
 
 ## 02 · 功能预览
 
@@ -131,7 +133,7 @@ dsh-doyourweb
 ### 构建并安装本地版本
 
 ```sh
-git clone --branch ver0.1.3 https://github.com/SheepofSheep/dsh-doyourweb.git
+git clone https://github.com/DeveloperYe/dsh-doyourweb.git
 cd dsh-doyourweb
 npm ci
 npm run build

@@ -27,11 +27,11 @@ export function pinnedExtensionId(manifest) {
  *
  * A secret cannot be shipped to the browser, and an unpacked extension can only
  * be recognised by its (forgeable) `Origin`, so pairing must be confirmed by the
- * person at the keyboard: the extension is shown a short code, the DSH setup page
- * lists the same code for the pending request, and the user approves the request
- * whose code matches the extension's toolbar badge. A local impostor can open its
- * own request, but it cannot make the real extension display its code, so the
- * comparison fails and the token is never handed over.
+ * person at the keyboard. The code is a PIN: it appears only in the extension's
+ * toolbar badge, and the setup page deliberately does not list it — the user types
+ * what the badge shows. A local impostor can open its own request, but its code is
+ * never rendered anywhere the impostor could read it back, so a wrong PIN is all
+ * it can submit and the token is never handed over.
  */
 export class Pairings {
   constructor({ ttlMs = 120000, maxPending = 4, now = () => Date.now() } = {}) {
@@ -51,10 +51,29 @@ export class Pairings {
     return entry;
   }
 
-  /** Live requests, newest last, for the setup page. */
+  /**
+   * Live requests, newest last, for the setup page. The code is omitted on
+   * purpose: it is a PIN only the extension badge may reveal, so a local process
+   * reading this page cannot learn the code of a request it opened itself.
+   */
   list() {
     this.prune();
-    return [...this.pending.values()].map(({ id, code, created, expires }) => ({ id, code, created, expires }));
+    return [...this.pending.values()].map(({ id, created, expires }) => ({ id, created, expires }));
+  }
+
+  /** The pending request whose PIN the human typed, or undefined when none matches. */
+  match(pin) {
+    this.prune();
+    const typed = String(pin ?? "").trim();
+    if (!/^\d{4}$/.test(typed)) return undefined;
+    for (const entry of this.pending.values()) if (entry.code === typed) return entry;
+    return undefined;
+  }
+
+  /** Drop every pending request, closing its socket so the extension can retry. */
+  clear(reason = "Pairing restarted") {
+    for (const entry of this.pending.values()) entry.socket.close?.(1000, reason);
+    this.pending.clear();
   }
 
   /** Consume one request; approval and denial are both single use. */

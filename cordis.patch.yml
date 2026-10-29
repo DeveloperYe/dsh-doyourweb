@@ -1,3 +1,13 @@
+# Browser-tabs bridge defaults. Everything below is safe on a single machine.
+#
+# Remote browser (see docs/remote-browser.md):
+#   bind:   "0.0.0.0" or the LAN address DSH should listen on (default 127.0.0.1)
+#   hosts:  every hostname the remote extensions will use in the Host header,
+#           e.g. ["192.168.1.5", "browser.example.com"] (port defaults to `port`)
+#   remote: must be true before a non-loopback bind is accepted
+#
+# Management, pairing and the setup page never leave this machine: a published
+# bridge only answers browser WebSocket traffic that carries the pairing token.
 - insert:
     - id: browser-tabs
       name: dsh-doyourweb
@@ -5,3 +15,6 @@
         port: 43187
         snapshotChars: 2400
         idleTimeoutMs: 120000
+        bind: 127.0.0.1
+        hosts: []
+        remote: false

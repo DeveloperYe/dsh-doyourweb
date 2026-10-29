@@ -2,14 +2,22 @@ const enabled = document.querySelector("#enabled");
 const status = document.querySelector("#status");
 const pairing = document.querySelector("#pairing");
 const code = document.querySelector("#code");
+const scheme = document.querySelector("#scheme");
+const host = document.querySelector("#host");
 const port = document.querySelector("#port");
+const tokenInput = document.querySelector("#token");
+const endpointLabel = document.querySelector("#endpoint");
 const savePort = document.querySelector("#save-port");
+const saveToken = document.querySelector("#save-token");
 const unpair = document.querySelector("#unpair");
 document.querySelector("#setup").addEventListener("click", async () => {
   try {
     const state = await chrome.runtime.sendMessage({ type: "status" });
     const selectedPort = state.port ?? 43187;
     if (!Number.isSafeInteger(selectedPort) || selectedPort < 1 || selectedPort > 65535) throw new Error("连接端口无效");
+    // The setup page exists only on the DSH machine; a remote browser pastes the
+    // token it prints there instead of pairing on its own.
+    if (!state.local) throw new Error("远程模式请在本机 DSH 的「应用管理 → 远程浏览器」复制配对令牌，粘贴到下面的输入框");
     await chrome.tabs.create({ url: `http://127.0.0.1:${selectedPort}/setup` });
   } catch (error) { showError(error); }
 });
@@ -22,13 +30,16 @@ async function refresh() {
   const waiting = state.pairing !== undefined && !state.stopped;
   enabled.checked = !state.stopped;
   if (document.activeElement !== port) port.value = String(state.port ?? 43187);
+  if (document.activeElement !== host) host.value = state.host ?? "127.0.0.1";
+  if (document.activeElement !== scheme) scheme.value = state.scheme ?? "ws";
+  endpointLabel.textContent = state.endpoint ? `当前地址：${state.endpoint}${state.local ? "" : "（远程）"}` : "";
   unpair.hidden = !state.paired;
   pairing.hidden = !waiting;
-  document.querySelector("#setup").hidden = state.connected;
+  document.querySelector("#setup").hidden = state.connected || !state.local;
   code.textContent = state.pairing?.code ?? "";
-  status.textContent = waiting ? "\u7b49\u5f85 DSH \u786e\u8ba4\u4e0b\u9762\u7684\u9a8c\u8bc1\u7801"
+  status.textContent = waiting ? "\u5c06\u4e0b\u9762\u7684\u9a8c\u8bc1\u7801\u8f93\u5165 DSH \u8fde\u63a5\u9875\u9762"
     : state.connected ? `\u5df2\u8fde\u63a5 \u00b7 ${state.availableTabs} \u4e2a\u6807\u7b7e\u9875 \u00b7 ${state.controlledTabs} \u4e2a\u53d7\u63a7`
-      : state.stopped ? "\u5df2\u6682\u505c" : state.paired ? "\u7b49\u5f85 DSH" : "\u672a\u914d\u5bf9";
+      : state.stopped ? "\u5df2\u6682\u505c" : state.paired ? "\u7b49\u5f85 DSH" : state.local ? "\u672a\u914d\u5bf9" : "\u7b49\u5f85\u914d\u5bf9\u4ee4\u724c";
 }
 
 function showError(error) { status.textContent = error.message; }
@@ -49,8 +60,14 @@ enabled.addEventListener("change", async () => {
   finally { enabled.disabled = false; }
 });
 savePort.addEventListener("click", async () => {
-  try { await send({ type: "port", port: Number(port.value) }); }
+  try { await send({ type: "host", scheme: scheme.value, host: host.value.trim(), port: Number(port.value) }); }
   catch (error) { showError(error); }
+});
+saveToken.addEventListener("click", async () => {
+  try {
+    await send({ type: "token", token: tokenInput.value });
+    tokenInput.value = "";
+  } catch (error) { showError(error); }
 });
 unpair.addEventListener("click", async () => {
   try { await send({ type: "unpair" }); }

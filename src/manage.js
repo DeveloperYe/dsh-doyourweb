@@ -1,12 +1,13 @@
 import { randomBytes } from "node:crypto";
 
-export function managementPage(key) {
+export function managementPage() {
   const nonce = randomBytes(16).toString("base64");
-  const script = `const key=${JSON.stringify(key)};
-const $=s=>document.querySelector(s);let current='plans';let last;
+  // No key in the page: the HttpOnly cookie set with this response authenticates
+  // the fetch calls, so a local process cannot read the key out of the HTML.
+  const script = `const $=s=>document.querySelector(s);let current='plans';let last;
 function node(tag,text){const e=document.createElement(tag);if(text!==undefined)e.textContent=text;return e}
 function button(text,fn){const b=node('button',text);b.onclick=async()=>{b.disabled=true;try{await fn();await load()}catch(e){$('#status').textContent=e.message}finally{b.disabled=false}};return b}
-async function api(action,data={}){const response=await fetch('/manage/api',{method:'POST',headers:{'Content-Type':'application/json','X-DSH-Key':key},body:JSON.stringify({action,...data})});const result=await response.json();if(!response.ok)throw Error(result.error||response.status);return result}
+async function api(action,data={}){const response=await fetch('/manage/api',{method:'POST',credentials:'same-origin',headers:{'Content-Type':'application/json'},body:JSON.stringify({action,...data})});const result=await response.json();if(!response.ok)throw Error(result.error||response.status);return result}
 function details(value){const pre=node('pre',JSON.stringify(value,null,2));return pre}
 function clear(id){const e=$(id);e.replaceChildren();return e}
 async function edit(ref,id){$('#connector').value=JSON.stringify(await api('template',{ref,connector:id}),null,2);show('connectors');$('#connector').focus()}
@@ -16,6 +17,7 @@ if(plan.error)item.append(node('p',plan.error));if(plan.status==='pending'){item
 for(const connection of last.applications.connections){const row=node('article');row.append(node('strong',connection.connector.label),node('p',connection.app),button('撤销此连接器',()=>api('revoke',{id:connection.id})));list.append(row)}
 const connectors=clear('#connectors');for(const c of last.applications.connectors){const row=node('article');row.append(node('h3',c.label),node('p',c.kind+' · '+(c.command||c.url||'')),button('编辑',()=>{$('#connector').value=JSON.stringify(c,null,2);$('#connector').scrollIntoView()}));connectors.append(row)}
 if(document.activeElement!==$('#trusted')){$('#ask').checked=last.applications.policy.askBeforeInstall;$('#trusted').value=last.applications.policy.trustedPublishers.join(', ')}
+try{const link=await api('link');$('#remote-token').value=link.token;$('#remote-endpoint').textContent=link.endpoint}catch(e){$('#remote-endpoint').textContent=e.message}
 }
 async function apps(){const data=await api('apps',{query:$('#query').value});const body=clear('#app-rows');for(const app of data.apps){const tr=node('tr');const name=node('td',app.product||app.name);const title=node('td',app.title);const action=node('td');action.append(button('发现连接器',async()=>{const result=await api('discover',{ref:app.ref});const area=clear('#discovery');area.append(node('h3',app.name));if(result.discoveryError)area.append(node('p',result.discoveryError));for(const c of result.candidates){const row=node('article');row.append(node('strong',c.label),node('p',c.provenance+' · '+c.kind+' · '+(c.installed?'已安装':'未安装')),node('p',c.description||''));if(c.docs&&/^https?:/.test(c.docs)){const a=node('a','来源');a.href=c.docs;a.target='_blank';a.rel='noopener noreferrer';row.append(a)}row.append(button('配置',()=>edit(app.ref,c.id)),button('连接 / 请求安装',async()=>{const connected=await api('connect',{ref:app.ref,connector:c.id});if(connected.status==='configuration_required'){await edit(app.ref,c.id);$('#status').textContent='连接器缺少参数或凭据'}else show('plans')}));area.append(row)}for(const link of result.searches||[]){const a=node('a',link.label);a.href=link.url;a.target='_blank';a.rel='noopener noreferrer';area.append(a)}}));tr.append(name,title,action);body.append(tr)}}
 function show(tab){current=tab;for(const section of document.querySelectorAll('main>section'))section.hidden=section.id!==tab+'-section';for(const b of document.querySelectorAll('nav button'))b.setAttribute('aria-selected',String(b.dataset.tab===tab));if(tab==='apps')apps().catch(e=>$('#status').textContent=e.message)}
@@ -32,6 +34,7 @@ load().catch(e=>$('#status').textContent=e.message);setInterval(()=>{if(!documen
 <main><section id="plans-section"><h2>连接请求</h2><div id="plans"></div></section>
 <section id="apps-section" hidden><h2>正在运行的应用</h2><div class="filter"><input id="query" type="text" aria-label="搜索应用" placeholder="搜索应用或窗口"><button id="refresh-apps">刷新</button></div><table><thead><tr><th>应用</th><th>窗口</th><th>操作</th></tr></thead><tbody id="app-rows"></tbody></table><div id="discovery"></div></section>
 <section id="connectors-section" hidden><h2>已配置连接器</h2><div id="connectors"></div><label for="connector">连接器 JSON（MCP / CLI；凭据只在本机保存）</label><textarea id="connector" spellcheck="false" placeholder='{"id":"my-app","label":"My MCP","kind":"mcp","apps":["MyApp"],"command":"C:\\\\Tools\\\\server.exe","args":[]}'></textarea><button id="save-connector">保存连接器</button></section>
-<section id="settings-section" hidden><h2>安装策略</h2><label><input id="ask" type="checkbox" checked> 下载与安装前询问</label><label for="trusted">允许免重复询问安装的发布者（逗号分隔）</label><input id="trusted" type="text" autocomplete="off"><p>关闭询问仅适用于已批准连接器及这里列出的发布者。新连接、桌面控制、前台操作、系统权限和软件许可不会因此自动获准。</p><button id="save-policy">保存设置</button></section></main>
+<section id="settings-section" hidden><h2>安装策略</h2><label><input id="ask" type="checkbox" checked> 下载与安装前询问</label><label for="trusted">允许免重复询问安装的发布者（逗号分隔）</label><input id="trusted" type="text" autocomplete="off"><p>关闭询问仅适用于已批准连接器及这里列出的发布者。新连接、桌面控制、前台操作、系统权限和软件许可不会因此自动获准。</p><button id="save-policy">保存设置</button>
+<h2>远程浏览器</h2><label for="remote-token">配对令牌（粘贴到另一台电脑扩展的「连接设置」）</label><input id="remote-token" type="text" readonly autocomplete="off" spellcheck="false"><p>连接地址：<code id="remote-endpoint"></code></p><p>远程电脑先用「加载解压的扩展」装好扩展，在弹窗里填协议（ws / wss）、主机、端口和这个令牌即可；远程连接不需要、也不允许在那边配对。管理页与配对始终只在本机可用。</p></section></main>
 <script nonce="${nonce}">${script}</script></html>` };
 }

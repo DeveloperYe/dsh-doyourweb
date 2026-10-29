@@ -23,10 +23,13 @@ function escapeHtml(value) {
 }
 
 export class BrowserBridge extends EventEmitter {
-  constructor({ home, port = 43187, extensionSource, idleTimeoutMs = 120000 } = {}) {
+  constructor({ home, port = 43187, extensionSource, idleTimeoutMs = 120000, bind = "127.0.0.1", hosts = [], remote = false } = {}) {
     super();
     this.home = home;
     this.port = port;
+    this.bind = String(bind || "127.0.0.1");
+    this.hosts = (Array.isArray(hosts) ? hosts : []).map(entry => String(entry).trim().toLowerCase()).filter(Boolean);
+    this.remote = remote === true;
     this.extensionSource = extensionSource || path.resolve(path.dirname(fileURLToPath(import.meta.url)), "../extension");
     this.profiles = new Map();
     this.relays = new Map();
@@ -35,7 +38,45 @@ export class BrowserBridge extends EventEmitter {
     this.idleTimeoutMs = idleTimeoutMs;
     this.pairings = new Pairings();
     this.setupKey = randomBytes(16).toString("hex");
+    this.pairingFailures = 0;
     this.sequence = 0;
+  }
+
+  /** Whether the bridge listens only on this machine. */
+  localBind() {
+    return ["127.0.0.1", "::1", "localhost"].includes(this.bind.toLowerCase());
+  }
+
+  /**
+   * Host headers this bridge answers to before any routing happens. Loopback is
+   * always accepted so a local browser keeps working when the bridge is published
+   * for a remote one; every additional name must be configured explicitly.
+   */
+  hostAllowed(header) {
+    if (typeof header !== "string" || !header) return false;
+    const match = /^(\[[^\]]+\]|[^:]+)(?::(\d+))?$/.exec(header.trim());
+    if (!match) return false;
+    if (match[2] !== undefined && Number(match[2]) !== this.port) return false;
+    const allowed = new Set(["127.0.0.1", "localhost", "::1", "[::1]"]);
+    if (!this.localBind()) allowed.add(this.bind.toLowerCase());
+    for (const entry of this.hosts) allowed.add(entry);
+    return allowed.has(match[1].toLowerCase());
+  }
+
+  /** Management, setup and pairing exist only for connections from this machine. */
+  static loopback(request) {
+    const address = request.socket?.remoteAddress;
+    return address === "127.0.0.1" || address === "::1" || address === "::ffff:127.0.0.1";
+  }
+
+  /**
+   * The address a remote extension should use, shown on the management page.
+   * Plain ws is the direct case; a TLS terminator (Cloudflare tunnel, Caddy,
+   * nginx) publishes the same bridge as wss://<hostname>/extension.
+   */
+  endpointDescription() {
+    const host = this.hosts[0] || (this.localBind() ? "127.0.0.1" : this.bind);
+    return `ws://${host}:${this.port}/extension`;
   }
 
   /**
@@ -68,30 +109,49 @@ export class BrowserBridge extends EventEmitter {
     return origin === `chrome-extension://${this.id}` || (this.legacyId !== undefined && origin === `chrome-extension://${this.legacyId}`);
   }
 
+  /**
+   * Start listening. Exposing the bridge beyond this machine is an explicit
+   * decision: a non-loopback bind without `remote: true` is refused so a typo in
+   * the settings cannot publish browser control to the network.
+   */
+  /**
+   * One WebSocket upgrade. Host allowlist first, then the extension origin, then
+   * either the paired token or — for a socket on this machine only — a pairing
+   * request. A published bridge therefore never pairs a remote browser.
+   */
+  handleUpgrade(request, socket, head) {
+    if (!this.hostAllowed(request.headers.host)) return socket.destroy();
+    const pathname = new URL(request.url, "http://127.0.0.1").pathname;
+    if (pathname === "/extension") {
+      const protocols = (request.headers["sec-websocket-protocol"] || "").split(",").map(s => s.trim());
+      if (!this.trustedOrigin(request.headers.origin)) return socket.destroy();
+      if (sameSecret(protocols[1], this.settings.token)) this.ws.handleUpgrade(request, socket, head, ws => this.acceptExtension(ws));
+      else if (protocols[1] === undefined && BrowserBridge.loopback(request) && request.headers.origin === `chrome-extension://${this.id}`) {
+        this.ws.handleUpgrade(request, socket, head, ws => this.acceptPairing(ws));
+      } else socket.destroy();
+    } else {
+      const relay = this.relays.get(pathname);
+      if (!relay || request.headers.origin || !sameSecret(request.headers.authorization, `Bearer ${this.settings.token}`) || relay.ws) return socket.destroy();
+      this.ws.handleUpgrade(request, socket, head, ws => this.acceptCDP(relay, ws));
+    }
+  }
+
+  /**
+   * Start listening. Exposing the bridge beyond this machine is an explicit
+   * decision: a non-loopback bind without `remote: true` is refused so a typo in
+   * the settings cannot publish browser control to the network.
+   */
   async start() {
     await this.prepareExtension();
+    if (!this.localBind() && !this.remote) {
+      throw new Error(`Refusing to listen on ${this.bind}: set "remote: true" in the plugin settings to accept browser connections from other machines, and list every hostname the extensions will use in "hosts".`);
+    }
     this.server = http.createServer((request, response) => this.handleHttp(request, response));
     this.ws = new WebSocketServer({ noServer: true, maxPayload: 8 * 1024 * 1024 });
-    this.server.on("upgrade", (request, socket, head) => {
-      if (request.headers.host !== `127.0.0.1:${this.port}`) return socket.destroy();
-      const pathname = new URL(request.url, "http://127.0.0.1").pathname;
-      if (pathname === "/extension") {
-        const protocols = (request.headers["sec-websocket-protocol"] || "").split(",").map(s => s.trim());
-        if (!this.trustedOrigin(request.headers.origin)) return socket.destroy();
-        // A token means an already paired browser; its absence asks for pairing.
-        if (sameSecret(protocols[1], this.settings.token)) this.ws.handleUpgrade(request, socket, head, ws => this.acceptExtension(ws));
-        else if (protocols[1] === undefined && request.headers.origin === `chrome-extension://${this.id}`) {
-          this.ws.handleUpgrade(request, socket, head, ws => this.acceptPairing(ws));
-        } else socket.destroy();
-      } else {
-        const relay = this.relays.get(pathname);
-        if (!relay || request.headers.origin || !sameSecret(request.headers.authorization, `Bearer ${this.settings.token}`) || relay.ws) return socket.destroy();
-        this.ws.handleUpgrade(request, socket, head, ws => this.acceptCDP(relay, ws));
-      }
-    });
+    this.server.on("upgrade", (request, socket, head) => this.handleUpgrade(request, socket, head));
     await new Promise((resolve, reject) => {
       this.server.once("error", reject);
-      this.server.listen(this.port, "127.0.0.1", resolve);
+      this.server.listen(this.port, this.bind, resolve);
     }).catch(error => {
       if (error.code !== "EADDRINUSE") throw error;
       throw new Error(`Browser bridge port ${this.port} is already in use. Another DSH instance, another application, or a bridge leaked by an older plugin version owns it; stop that instance or set a different "port" in the plugin settings.`);
@@ -128,14 +188,22 @@ export class BrowserBridge extends EventEmitter {
   }
 
   handleHttp(request, response) {
-    if (request.headers.host !== `127.0.0.1:${this.port}`) { response.writeHead(403).end(); return; }
+    if (!this.hostAllowed(request.headers.host)) { response.writeHead(403).end(); return; }
     const pathname = new URL(request.url, "http://127.0.0.1").pathname;
+    // Management, pairing and setup stay local to this machine even when the
+    // bridge is published for a remote browser: a published port must never hand
+    // out the management surface.
+    if (!BrowserBridge.loopback(request)) { response.writeHead(404).end(); return; }
     if (pathname === "/manage/api" && request.method === "POST") return this.handleManagement(request, response);
     if (request.method === "POST" && pathname === "/setup/pair") return this.handlePairPost(request, response);
     if (request.method !== "GET") { response.writeHead(405).end(); return; }
     if (pathname === "/manage") {
-      const { html, nonce } = managementPage(this.setupKey);
+      const { html, nonce } = managementPage();
+      // The key never appears in the page body any more: the page authenticates
+      // with this HttpOnly cookie, so a local process cannot read the key back by
+      // fetching the management page.
       response.writeHead(200, { "Content-Type": "text/html; charset=utf-8", "Cache-Control": "no-store", "Referrer-Policy": "no-referrer",
+        "Set-Cookie": `dsh_manage=${this.setupKey}; HttpOnly; SameSite=Strict; Path=/`,
         "Content-Security-Policy": `default-src 'none'; connect-src 'self'; style-src 'unsafe-inline'; script-src 'nonce-${nonce}'; base-uri 'none'; frame-ancestors 'none'` });
       response.end(html); return;
     }
@@ -151,7 +219,8 @@ export class BrowserBridge extends EventEmitter {
 
   handleManagement(request, response) {
     const origin = `http://127.0.0.1:${this.port}`;
-    if (!sameSecret(request.headers["x-dsh-key"], this.setupKey)
+    const cookie = /(?:^|;\s*)dsh_manage=([0-9a-f]{32,})/.exec(request.headers.cookie || "")?.[1];
+    if (!sameSecret(request.headers["x-dsh-key"] ?? cookie, this.setupKey)
       || (request.headers.origin && request.headers.origin !== origin)
       || (request.headers["sec-fetch-site"] && request.headers["sec-fetch-site"] !== "same-origin")
       || request.headers["content-type"]?.split(";")[0] !== "application/json") { response.writeHead(403).end(); return; }
@@ -171,19 +240,21 @@ export class BrowserBridge extends EventEmitter {
 
   setupPage(nonce) {
     const pending = this.pairings.list();
-    const requests = pending.map(entry => `<li><strong>&#39564;&#35777;&#30721; ${escapeHtml(entry.code)}</strong>
-      <form method="post" action="/setup/pair"><input type="hidden" name="key" value="${escapeHtml(this.setupKey)}">
-      <input type="hidden" name="id" value="${escapeHtml(entry.id)}">
-      <button name="action" value="allow">&#20801;&#35768;</button>
-      <button name="action" value="deny">&#25298;&#32477;</button></form></li>`).join("");
+    // The PIN is never rendered here; the user copies it from the extension badge.
+    const requests = pending.length ? `<form class="requests" method="post" action="/setup/pair">
+      <label for="pin">扩展图标上的 4 位验证码</label>
+      <input id="pin" name="pin" inputmode="numeric" autocomplete="one-time-code" pattern="[0-9]{4}" maxlength="4" required
+        style="width:104px;font:600 18px/1.4 ui-monospace,monospace;letter-spacing:3px;padding:6px 8px;text-align:center;border:1px solid #ccd9d0;border-radius:8px">
+      <button name="action" value="allow">&#20801;&#35768;</button></form>
+      <p class="hint">有 ${pending.length} 条待确认请求。只输入你自己浏览器图标上显示的数字。</p>` : "";
     const copy = (label, value) => `<button type="button" class="copy" data-copy="${escapeHtml(value)}">${label}</button>`;
     const connected = this.profiles.size > 0;
     const install = `<div class="step"><span class="number">1</span><div><h2>添加浏览器扩展</h2><p>打开扩展管理页，启用开发者模式，选择「加载解压的扩展」。</p><div class="actions">${copy("复制 Edge 管理页地址", "edge://extensions")}${copy("复制 Chrome 管理页地址", "chrome://extensions")}</div><div class="path"><code>${escapeHtml(this.extensionPath)}</code>${copy("复制扩展目录路径", this.extensionPath)}</div><p class="hint">将目录路径粘贴到文件选择框；macOS 可按 ⇧⌘G。已安装可直接进行下一步。</p></div></div>`;
     const body = `<main><header><div class="mark">↗</div><div><p class="eyebrow">DSH / BROWSER</p><h1>连接你的浏览器</h1></div><span class="badge ${connected ? "online" : ""}">${connected ? "已连接" : pending.length ? "待确认" : "等待连接"}</span></header>
       <p class="intro">让聊天接着你的网页工作。保留登录状态，在对话中用 @ 选择页面。</p>
       ${connected ? `<section class="success"><h2>连接已就绪</h2><p>回到 DSH，在输入框键入 <kbd>@</kbd>，选择需要使用的标签页。</p><p class="hint">已连接 ${this.profiles.size} 个浏览器配置。需要标注页面时，打开扩展并点击「批注当前页面」。</p></section><details><summary>连接另一个浏览器</summary>${install}</details>` : `<section class="card">${pending.length ? `<details><summary>扩展已发来请求 · 查看安装步骤</summary>${install}</details>` : install}</section>`}
-      ${!connected || requests ? `<section class="card step"><span class="number">2</span><div><h2>核对验证码，确认连接</h2><p>与扩展弹窗中的 4 位验证码一致后，点击允许。</p>${requests ? `<ul class="requests">${requests}</ul>` : `<div class="waiting"><span class="dot"></span>等待扩展发来请求…</div><p class="hint">安装后会自动出现，无需手动输入验证码。</p>`}</div></section>` : ""}
-      <details class="help"><summary>连接帮助与本地 HTML</summary><p>浏览器限制网页直接打开扩展管理页，请复制地址后粘贴到地址栏。</p><p>如果扩展显示 OFF，请打开扩展弹窗，检查连接开关，并在「连接设置」将端口设为 <code>${this.port}</code>。</p><p>本地 HTML：在扩展详情中开启「允许访问文件网址」，再用 @ 选择已打开的文件标签页。</p><p>扩展只连接本机，不读取 Cookie；只有在对话中引用的页面才允许操作。</p></details>
+      ${!connected || requests ? `<section class="card step"><span class="number">2</span><div><h2>输入验证码，确认连接</h2><p>扩展图标上的 4 位数字就是配对码，输入后点击允许。</p>${requests || `<div class="waiting"><span class="dot"></span>等待扩展发来请求…</div><p class="hint">加载扩展后配对请求会自动出现。</p>`}</div></section>` : ""}
+      <details class="help"><summary>连接帮助、本地 HTML 与远程浏览器</summary><p>浏览器限制网页直接打开扩展管理页，请复制地址后粘贴到地址栏。</p><p>如果扩展显示 OFF，请打开扩展弹窗，检查连接开关，并在「连接设置」将端口设为 <code>${this.port}</code>。</p><p>本地 HTML：在扩展详情中开启「允许访问文件网址」，再用 @ 选择已打开的文件标签页。</p><p>远程浏览器：在「应用管理」页复制配对令牌，填到另一台电脑扩展的「连接设置」里（协议 ws 或 wss、主机、端口一致）。远程浏览器只能使用令牌连接，不能在本页配对。</p><p>扩展只连接 DSH 指定的地址，不读取 Cookie；只有在对话中引用的页面才允许操作。</p></details>
       <footer><span>DSH DoYourWeb · 本机连接</span><a href="/setup">刷新状态</a></footer></main>`;
     const script = `
       for (const button of document.querySelectorAll(".copy")) button.addEventListener("click", async () => {
@@ -208,18 +279,36 @@ export class BrowserBridge extends EventEmitter {
   }
 
   handlePairPost(request, response) {
-    // Same-origin form post plus the per-start key: a page on another origin can
-    // neither read the key nor post here with this content type.
+    // Loopback only (enforced in handleHttp) and same-origin only: a page on
+    // another origin cannot post here. The PIN is the human factor, and it is
+    // compared against the badge code the extension was given — never against
+    // anything this page renders.
+    if (!BrowserBridge.loopback(request)) { response.writeHead(403).end(); return; }
     const sameOrigin = !request.headers["sec-fetch-site"] || request.headers["sec-fetch-site"] === "same-origin";
     if (!sameOrigin) { response.writeHead(403).end(); return; }
     let body = "";
     request.on("data", chunk => { body += chunk; if (body.length > 4096) request.destroy(); });
     request.on("end", () => {
       const fields = new URLSearchParams(body);
-      if (!sameSecret(fields.get("key"), this.setupKey)) { response.writeHead(403).end(); return; }
-      const id = fields.get("id") ?? "";
-      if (fields.get("action") === "allow") this.approvePairing(id);
-      else this.pairings.take(id)?.socket.close(1000, "Pairing denied");
+      if (fields.get("action") === "deny") {
+        // Denial grants nothing, so an id is enough; it lets a user drop a request
+        // they did not start without waiting for the two-minute expiry.
+        this.pairings.take(fields.get("id") ?? "")?.socket.close(1000, "Pairing denied");
+        response.writeHead(303, { Location: "/setup", "Cache-Control": "no-store" }).end();
+        return;
+      }
+      const entry = this.pairings.match(fields.get("pin"));
+      if (!entry) {
+        this.pairingFailures += 1;
+        // A wrong PIN is the signature of a local brute force; drop every pending
+        // request and make each browser ask again.
+        if (this.pairingFailures >= 5) { this.pairingFailures = 0; this.pairings.clear("Too many pairing attempts"); }
+        response.writeHead(403, { "Content-Type": "text/plain; charset=utf-8", "Cache-Control": "no-store" })
+          .end("配对码不正确。请核对扩展图标上的 4 位数字后重试。");
+        return;
+      }
+      this.pairingFailures = 0;
+      this.approvePairing(entry.id);
       response.writeHead(303, { Location: "/setup", "Cache-Control": "no-store" }).end();
     });
   }

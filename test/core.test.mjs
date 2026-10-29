@@ -135,18 +135,25 @@ test("pairing hands the token only to the request the user approved", async () =
   }
 });
 
-test("the setup page serves the pairing request and refuses forged posts", async () => {
+test("the setup page never prints the pairing PIN and refuses forged posts", async () => {
   const root = await mkdtemp(path.join(os.tmpdir(), "dsh-setup-"));
   const bridge = new BrowserBridge({ home: path.join(root, "bridge"), port: 43193 });
   try {
     await bridge.start();
-    const socket = { readyState: 1, send: () => {}, close: () => {}, on: () => {} };
+    const sent = [];
+    const socket = { readyState: 1, send: message => sent.push(JSON.parse(message)), close: () => {}, on: () => {} };
     bridge.acceptPairing(socket);
+    const pin = sent[0].params.code;
+    assert.match(pin, /^[0-9]{4}$/);
+    assert.equal(bridge.pairings.list()[0].code, undefined, "the pending list must not expose the PIN");
     const response = await fetch(bridge.url);
     const page = await response.text();
     const policy = response.headers.get("content-security-policy");
-    const request = bridge.pairings.list()[0];
-    assert.match(page, new RegExp(request.code));
+    // The PIN lives in the extension badge only. Rendering it here would let a
+    // local process approve the very request it opened.
+    assert.equal(page.includes(pin), false, "the pairing PIN must never appear on the page");
+    assert.equal(page.includes(bridge.setupKey), false, "the management key must never appear on the page");
+    assert.match(page, /name="pin"/);
     assert.match(page, /\/setup\/pair/);
     // The folder path is a copy button, not a link: a browser refuses web-page
     // navigation to chrome://, so only the user can open the extension manager.
@@ -160,28 +167,30 @@ test("the setup page serves the pairing request and refuses forged posts", async
     assert.ok(page.includes(`<script nonce="${nonce}">`), "the page must carry the script nonce it was served with");
     assert.ok(page.includes(String(bridge.port)), "the page must name the port the extension needs");
     const pairEndpoint = new URL("setup/pair", bridge.url);
-    // A cross-site post cannot approve anything, even with the right fields.
+    // A cross-site post cannot approve anything, even with the right PIN.
     const forged = await fetch(pairEndpoint, {
       method: "POST", headers: { "Content-Type": "application/x-www-form-urlencoded", "Sec-Fetch-Site": "cross-site" },
-      body: new URLSearchParams({ key: bridge.setupKey, id: request.id, action: "allow" }),
+      body: new URLSearchParams({ pin, action: "allow" }),
     });
     assert.equal(forged.status, 403);
     assert.equal(bridge.pairings.list().length, 1);
-    // A wrong key is refused too.
+    // A wrong PIN is refused and never consumes the pending request.
     const guessed = await fetch(pairEndpoint, {
       method: "POST", headers: { "Content-Type": "application/x-www-form-urlencoded", "Sec-Fetch-Site": "same-origin" },
-      body: new URLSearchParams({ key: "nope", id: request.id, action: "allow" }),
+      body: new URLSearchParams({ pin: pin === "0000" ? "0001" : "0000", action: "allow" }),
     });
     assert.equal(guessed.status, 403);
     assert.equal(bridge.pairings.list().length, 1);
-    // The page's own form approves the request.
+    // The page form approves the request once the user types the badge PIN.
     const approved = await fetch(pairEndpoint, {
       method: "POST", redirect: "manual",
       headers: { "Content-Type": "application/x-www-form-urlencoded", "Sec-Fetch-Site": "same-origin" },
-      body: new URLSearchParams({ key: bridge.setupKey, id: request.id, action: "allow" }),
+      body: new URLSearchParams({ pin, action: "allow" }),
     });
     assert.equal(approved.status, 303);
     assert.equal(bridge.pairings.list().length, 0);
+    assert.equal(sent.at(-1).method, "dsh.paired");
+    assert.equal(sent.at(-1).params.token, bridge.settings.token);
   } finally {
     await bridge.close();
     assert.equal(path.dirname(bridge.home), root);

@@ -12,10 +12,13 @@ let stopped = false;
 let inventoryTimer;
 let availableTabs = 0;
 let inventoryGeneration = 0;
-// Pairing state: the token is stored in browser storage, never in a shipped file,
-// and is only accepted from the DSH setup page after the user compares its code.
+// Pairing state: the token is stored in browser storage, never in a shipped file.
+// It is either handed over by the local setup page after the user types the badge
+// PIN, or pasted by the user for a remote DSH machine that cannot offer pairing.
 let token = config.token || "";
 let port = config.port || 43187;
+let host = config.host || "127.0.0.1";
+let scheme = config.scheme || "ws";
 let pairing;
 const favicons = new Map();
 const attached = new Set();
@@ -143,11 +146,22 @@ async function updateStatus() {
   const connected = !!token && socket?.readyState === WebSocket.OPEN && !pairing;
   const title = stopped ? "\u5df2\u6682\u505c"
     : pairing ? `\u914d\u5bf9\u4e2d \u00b7 ${pairing.code}`
-      : !token ? "\u672a\u914d\u5bf9" : connected ? "\u5df2\u8fde\u63a5" : "\u7b49\u5f85 DSH";
+      : !token ? (localHost() ? "\u672a\u914d\u5bf9" : "\u7b49\u5f85\u914d\u5bf9\u4ee4\u724c")
+        : connected ? `\u5df2\u8fde\u63a5 \u00b7 ${host}` : `\u7b49\u5f85 DSH \u00b7 ${host}`;
   await chrome.action.setTitle({ title: `DSH DoYourWeb - ${title}` });
   // While unpaired the badge is the code the user compares with the DSH setup page.
   await chrome.action.setBadgeText({ text: pairing ? pairing.code : connected || stopped ? "" : "OFF" });
   await chrome.action.setBadgeBackgroundColor({ color: pairing ? "#b45309" : "#6b7280" });
+}
+
+/** 127.0.0.1 / browser.lan.example / [::1] -> a host section a URL can use. */
+function endpoint() {
+  const name = host.includes(":") && !host.startsWith("[") ? `[${host}]` : host;
+  return `${scheme}://${name}:${port}/extension`;
+}
+
+function localHost() {
+  return ["127.0.0.1", "localhost", "::1", "[::1]"].includes(host.toLowerCase());
 }
 
 async function connect() {
@@ -155,9 +169,10 @@ async function connect() {
   await cleanup;
   if (stopped || socket && [WebSocket.OPEN, WebSocket.CONNECTING].includes(socket.readyState)) return;
   clearTimeout(retryTimer);
-  // No token means "please pair me"; the bridge answers with a code to confirm.
+  // No token means "please pair me"; a remote bridge never offers pairing, so a
+  // remote browser must hold a token the user copied from the DSH management page.
   const protocols = token ? ["dsh-browser", token] : ["dsh-browser"];
-  const connection = new WebSocket(`ws://127.0.0.1:${port}/extension`, protocols);
+  const connection = new WebSocket(endpoint(), protocols);
   socket = connection;
   connection.onopen = () => {
     if (socket !== connection) return connection.close();
@@ -221,10 +236,13 @@ chrome.runtime.onInstalled.addListener(reconnect);
 chrome.alarms.onAlarm.addListener(alarm => { if (alarm.name === "reconnect") reconnect(); });
 chrome.runtime.onMessage.addListener((message, _sender, respond) => {
   if (_sender.id !== chrome.runtime.id || (_sender.url && _sender.url !== chrome.runtime.getURL("popup.html"))) return;
-  if (!["status", "toggle", "unpair", "port", "annotate", "manage"].includes(message.type)) return;
+  if (!["status", "toggle", "unpair", "port", "host", "token", "annotate", "manage"].includes(message.type)) return;
   void (async () => {
     await ready;
-    if (message.type === "manage") { await chrome.tabs.create({ url: `http://127.0.0.1:${port}/manage` }); respond({ ok: true }); return; }
+    if (message.type === "manage") {
+      if (!localHost()) throw new Error("管理页只在 DSH 本机可用；远程连接请在本机 /manage 里复制令牌");
+      await chrome.tabs.create({ url: `http://127.0.0.1:${port}/manage` }); respond({ ok: true }); return;
+    }
     if (message.type === "annotate") {
       if (!token || socket?.readyState !== WebSocket.OPEN || pairing) throw new Error("请先连接 DSH");
       const [tab] = await chrome.tabs.query({ active: true, currentWindow: true });
@@ -236,7 +254,38 @@ chrome.runtime.onMessage.addListener((message, _sender, respond) => {
       respond({ connected: !!token && socket?.readyState === WebSocket.OPEN && !pairing,
         availableTabs, controlledTabs: attached.size, stopped, paired: !!token,
         pairing: pairing === undefined ? undefined : { code: pairing.code, expiresAt: pairing.expiresAt },
-        port });
+        port, host, scheme, local: localHost(), endpoint: endpoint() });
+      return;
+    }
+    if (message.type === "host") {
+      // Where this browser looks for DSH: same machine, a LAN address, or a
+      // tunnel hostname ending in wss. A remote bridge never offers pairing.
+      const nextScheme = message.scheme === "wss" ? "wss" : "ws";
+      const nextHost = String(message.host ?? "").trim();
+      if (!/^(?:[A-Za-z0-9.-]+|\[[0-9A-Fa-f:]+\])$/.test(nextHost)) throw new Error("主机名只允许字母、数字、点、横线，或方括号包裹的 IPv6 地址");
+      const nextPort = Number(message.port ?? port);
+      if (!Number.isSafeInteger(nextPort) || nextPort < 1 || nextPort > 65535) throw new Error("端口必须是 1-65535 之间的整数");
+      scheme = nextScheme; host = nextHost; port = nextPort;
+      await chrome.storage.local.set({ scheme, host, port });
+      await disconnect();
+      await connect();
+      await updateStatus();
+      respond({ ok: true, endpoint: endpoint() });
+      return;
+    }
+    if (message.type === "token") {
+      // Manual pairing for a remote bridge: paste the token shown on the DSH
+      // management page. It is the only credential a remote browser can use.
+      const value = String(message.token ?? "").trim().toLowerCase();
+      if (value && !/^[0-9a-f]{64}$/.test(value)) throw new Error("配对令牌应为 64 位十六进制字符，请从 DSH 的「应用管理 → 远程浏览器」复制");
+      token = value;
+      pairing = undefined;
+      if (value) await chrome.storage.local.set({ token }); else await chrome.storage.local.remove(["token"]);
+      await disconnect();
+      retry = 1000;
+      await connect();
+      await updateStatus();
+      respond({ ok: true });
       return;
     }
     if (message.type === "unpair") {
@@ -270,7 +319,7 @@ chrome.runtime.onMessage.addListener((message, _sender, respond) => {
 
 // MV3 service workers register listeners synchronously and cannot use top-level await.
 ready = (async () => {
-  const stored = await chrome.storage.local.get(["profile", "stopped", "token", "port"]);
+  const stored = await chrome.storage.local.get(["profile", "stopped", "token", "port", "host", "scheme"]);
   profile = stored.profile || crypto.randomUUID();
   // Session storage survives worker suspension, but never a full browser restart.
   const session = await chrome.storage.session.get(["browserSession"]);
@@ -279,6 +328,8 @@ ready = (async () => {
   stopped = stored.stopped === true;
   token = stored.token || config.token || "";
   port = stored.port || config.port || 43187;
+  host = stored.host || config.host || "127.0.0.1";
+  scheme = stored.scheme === "wss" ? "wss" : (stored.scheme || config.scheme || "ws");
   await chrome.storage.local.set({ profile });
   await chrome.alarms.create("reconnect", { periodInMinutes: 0.5 });
   await updateStatus();

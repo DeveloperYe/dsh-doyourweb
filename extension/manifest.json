@@ -1,14 +1,36 @@
 {
   "manifest_version": 3,
   "name": "DSH DoYourWeb",
-  "version": "0.1.6",
+  "version": "0.1.7",
   "minimum_chrome_version": "125",
   "description": "Connect existing Chrome and Edge tabs to DeepSeek Harness locally.",
   "key": "MIIBIjANBgkqhkiG9w0BAQEFAAOCAQ8AMIIBCgKCAQEA760h6OPM6El/AYSl/YErzfphv+E9QtvKcfXXPQrcv9zBh/mgg2W3MGSMkZlCY0DkCBjlUedcvGeCzAcxQJ//a+gsbzNCmxpz0SU9XETXcRFhVdivUlLbaIT7Tf0PgQIqxBU0cCg/PIHyGnZ8EYhL96sHmov2JGCwXAhNC4XZ7I+hYEfO+SP7veV1yKXq2dxPu5lmZmTlj9e3GWZQ+uMbNKSw3+UW+P3gbvHqGdLzbPynmyAn29mj5lL7WGFmza5YEM7e9XVR6eMOd60weNKgrsWQxrisQTLcf04Tr7V5TGgAcmXsn8wcWok1RGua82DajHAmqLD/S9LXPP6boxKuAQIDAQAB",
-  "permissions": ["debugger", "tabs", "storage", "alarms", "favicon"],
-  "host_permissions": ["file:///*"],
-  "icons": { "16": "icons/icon-16.png", "32": "icons/icon-32.png", "48": "icons/icon-48.png", "128": "icons/icon-128.png" },
-  "background": { "service_worker": "background.js", "type": "module" },
-  "action": { "default_title": "DSH DoYourWeb", "default_popup": "popup.html",
-    "default_icon": { "16": "icons/icon-16.png", "32": "icons/icon-32.png" } }
+  "permissions": [
+    "debugger",
+    "tabs",
+    "storage",
+    "alarms",
+    "favicon"
+  ],
+  "host_permissions": [
+    "file:///*"
+  ],
+  "icons": {
+    "16": "icons/icon-16.png",
+    "32": "icons/icon-32.png",
+    "48": "icons/icon-48.png",
+    "128": "icons/icon-128.png"
+  },
+  "background": {
+    "service_worker": "background.js",
+    "type": "module"
+  },
+  "action": {
+    "default_title": "DSH DoYourWeb",
+    "default_popup": "popup.html",
+    "default_icon": {
+      "16": "icons/icon-16.png",
+      "32": "icons/icon-32.png"
+    }
+  }
 }

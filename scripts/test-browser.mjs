@@ -59,14 +59,25 @@ async function configurePort(port) {
   } finally { await popup.close(); }
 }
 
-/** Approve the extension's pairing request, as the user does on the setup page. */
+/** The 4-digit PIN the extension shows on its toolbar badge. */
+async function badgeCode() {
+  const worker = browser.serviceWorkers()[0];
+  if (!worker) return "";
+  try { return await worker.evaluate(async () => chrome.action.getBadgeText({})); } catch { return ""; }
+}
+
+/** Pair exactly as a user does: read the badge PIN and type it into the setup page. */
 async function waitForPairing() {
   const deadline = Date.now() + 15000;
   while (Date.now() < deadline) {
     const [request] = bridge.pairings.list();
-    if (request) {
-      assert.equal(bridge.approvePairing(request.id), true);
-      return request;
+    const code = await badgeCode();
+    if (request && /^\d{4}$/.test(code)) {
+      const response = await fetch(new URL("setup/pair", bridge.url), { method: "POST", redirect: "manual",
+        headers: { "Content-Type": "application/x-www-form-urlencoded", "Sec-Fetch-Site": "same-origin" },
+        body: new URLSearchParams({ pin: code, action: "allow" }) });
+      assert.equal(response.status, 303, "the badge PIN must approve the pairing request");
+      return { ...request, code };
     }
     await new Promise(resolve => setTimeout(resolve, 100));
   }

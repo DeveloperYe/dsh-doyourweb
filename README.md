@@ -17,6 +17,8 @@ English | [简体中文](README.zh-CN.md)
 
 *The local pairing page connects your browser extension to the DSH plugin.*
 
+> **This fork** ([DeveloperYe/dsh-doyourweb](https://github.com/DeveloperYe/dsh-doyourweb)) adds remote browsers and hardens the local management surface. Another machine's Chrome/Edge can drive the tabs it already has; see [docs/remote-browser.md](docs/remote-browser.md).
+
 ---
 
 ## 01 · Introduction
@@ -25,7 +27,7 @@ Browser tasks often depend on pages you have already opened and accounts you hav
 
 The project has two parts: a DSH plugin and a companion Manifest V3 extension. The plugin adds browser references to the native `@` and `/` menus; the extension supplies tab metadata and browser control. Once paired, the extension reconnects in the background without keeping its popup open.
 
-Current version: **0.1.6** for both the package and browser extension. See the [changelog](CHANGELOG.md).
+Current version: **0.1.7** for both the package and browser extension. See the [changelog](CHANGELOG.md).
 
 ## 02 · Preview
 
@@ -128,7 +130,7 @@ This requires a published package. If the registry returns `404`, use the local 
 ### Build and Install Locally
 
 ```sh
-git clone --branch ver0.1.3 https://github.com/SheepofSheep/dsh-doyourweb.git
+git clone https://github.com/DeveloperYe/dsh-doyourweb.git
 cd dsh-doyourweb
 npm ci
 npm run build

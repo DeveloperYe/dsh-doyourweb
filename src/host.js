@@ -55,12 +55,13 @@ export async function apply(ctx, config = {}) {
     scope.effect(() => balanceFileReferences(scope.fileReferences, scope.workingDirectory), `${PACKAGE}: file candidates`);
   });
   const home = path.join(config.home || process.env.DSH_HOME || path.join(os.homedir(), ".dsh"), "browser-tabs");
-  const bridge = new BrowserBridge({ home, port: config.port || 43187, idleTimeoutMs: config.idleTimeoutMs || 120000,
+  const bridge = new BrowserBridge({ home, port: config.port ?? 43187, idleTimeoutMs: config.idleTimeoutMs || 120000,
     bind: config.bind || "127.0.0.1", hosts: config.hosts || [], remote: config.remote === true,
     extensionScheme: config.extensionScheme || "ws", extensionPort: config.extensionPort,
     extensionProfiles: config.profiles || [], autoBuild: config.autoBuild !== false,
-    publicUrl: config.publicUrl, tls: config.tls === true, tlsPort: config.tlsPort || 8443, tlsIps: config.tlsIps || [],
-    portFallback: config.port === undefined || config.portFallback === true });
+    publicUrl: config.publicUrl, tls: config.tls === true, tlsPort: config.tlsPort ?? 8443, tlsIps: config.tlsIps || [],
+    portFallback: config.port === undefined || config.portFallback === true,
+    tlsPortFallback: config.tlsPort === undefined || config.tlsPortFallback === true });
   await ctx.effect(async () => {
     try { await bridge.start(); }
     catch (error) { await bridge.close(); throw error; }
@@ -114,7 +115,7 @@ export async function apply(ctx, config = {}) {
       case "revoke": return applications.revoke(request.id);
       case "link": return { token: bridge.settings.token, endpoint: bridge.endpointDescription(), bind: bridge.bind, hosts: bridge.hosts, port: bridge.port };
       case "extensions": return { builds: decorateExtensions(bridge), error: bridge.extensionBuildError, outDir: bridge.extensionOutDir, version: bridge.version,
-        tls: bridge.tlsActive ? { port: bridge.tlsPort, notAfter: bridge.ca?.notAfter, ca: `${bridge.publicOrigin()}/ca.crt`,
+        tls: bridge.tlsActive ? { port: bridge.tlsPort, publicPort: bridge.extensionPort || bridge.tlsPort, notAfter: bridge.ca?.notAfter, ca: `${bridge.publicOrigin()}/ca.crt`,
           names: bridge.ca?.names, ips: bridge.ca?.ips } : undefined };
       case "rebuild": await bridge.buildExtensions({ force: true }); bridge.extensionBuildError = undefined;
         return { builds: decorateExtensions(bridge), outDir: bridge.extensionOutDir, version: bridge.version };

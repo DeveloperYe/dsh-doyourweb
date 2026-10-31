@@ -37,7 +37,7 @@ function deniedPage() {
 export class BrowserBridge extends EventEmitter {
   constructor({ home, port = 43187, extensionSource, idleTimeoutMs = 120000, bind = "127.0.0.1", hosts = [], remote = false,
     extensionScheme = "ws", extensionPort, extensionProfiles: profiles = [], autoBuild = true, publicUrl,
-    tls = false, tlsPort = 8443, tlsIps = [], portFallback = false } = {}) {
+    tls = false, tlsPort = 8443, tlsIps = [], portFallback = false, tlsPortFallback = false } = {}) {
     super();
     this.home = home;
     this.port = port;
@@ -49,11 +49,13 @@ export class BrowserBridge extends EventEmitter {
     this.extensionProfilesConfig = Array.isArray(profiles) ? profiles : [];
     this.publicUrl = publicUrl ? String(publicUrl) : undefined;
     this.tlsEnabled = tls === true;
-    this.tlsPort = Number(tlsPort) || 8443;
+    this.tlsPort = Number.isFinite(Number(tlsPort)) && Number(tlsPort) >= 0 ? Number(tlsPort) : 8443;
     this.tlsIps = (Array.isArray(tlsIps) ? tlsIps : []).map(value => String(value).trim()).filter(Boolean);
     this.tlsActive = false;
     this.portFallback = portFallback === true;
     this.portFallbackUsed = false;
+    this.tlsPortFallback = tlsPortFallback === true;
+    this.tlsPortFallbackUsed = false;
     this.managementFailures = new Map();
     this.autoBuild = autoBuild !== false;
     this.extensionOutDir = path.join(home || ".", "extensions");
@@ -182,7 +184,10 @@ export class BrowserBridge extends EventEmitter {
     // When the bridge terminates TLS itself every published endpoint is wss on the
     // TLS port; otherwise the operator's own terminator decides scheme and port.
     const scheme = this.tlsActive ? "wss" : this.extensionScheme;
-    const publicPort = this.tlsActive ? this.tlsPort : this.extensionPort;
+    // The port the extension dials is whatever the NAT forwards from outside, which
+    // is not necessarily the port this process listens on (external 9443 -> internal
+    // 8443 is fine). extensionPort wins when set; otherwise they are the same.
+    const publicPort = this.tlsActive ? (this.extensionPort || this.tlsPort) : this.extensionPort;
     const hosts = this.tlsActive ? [...this.hosts, ...this.tlsIps] : this.hosts;
     return extensionProfiles({ bind: this.bind, port: this.port, hosts, scheme, publicPort, profiles: this.extensionProfilesConfig });
   }
@@ -241,10 +246,23 @@ export class BrowserBridge extends EventEmitter {
       void this.handleHttp(request, response);
     });
     this.tlsServer.on("upgrade", (request, socket, head) => this.handleUpgrade(request, socket, head));
-    await new Promise((resolve, reject) => {
-      this.tlsServer.once("error", reject);
-      this.tlsServer.listen(this.tlsPort, this.bind, resolve);
+    const listenTls = requested => new Promise((resolve, reject) => {
+      const onError = error => { this.tlsServer.off("listening", onListening); reject(error); };
+      const onListening = () => { this.tlsServer.off("error", onError); resolve(); };
+      this.tlsServer.once("error", onError);
+      this.tlsServer.once("listening", onListening);
+      this.tlsServer.listen(requested, this.bind);
     });
+    try {
+      await listenTls(this.tlsPort);
+    } catch (error) {
+      if (error.code !== "EADDRINUSE") throw error;
+      if (!this.tlsPortFallback) {
+        throw new Error(`Browser bridge TLS port ${this.tlsPort} is already in use; stop whatever owns it or set a different "tlsPort" in the plugin settings.`);
+      }
+      await listenTls(0);
+      this.tlsPortFallbackUsed = true;
+    }
     this.tlsPort = this.tlsServer.address().port;
     this.tlsActive = true;
   }

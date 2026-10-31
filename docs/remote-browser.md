@@ -96,6 +96,35 @@ cloudflared tunnel --url http://127.0.0.1:43187
 - Tailscale 更简单：两端装好后 `bind` 填 tailscale 网卡地址（如 `100.x.y.z`），
   `hosts: ["100.x.y.z"]`，扩展直接 `ws://100.x.y.z:43187`，流量在 WireGuard 里。
 
+## 端口全部可自定义
+
+| 配置项 | 作用 | 默认 | 备注 |
+|---|---|---|---|
+| `port` | 本机明文监听（CDP 中继 + 本机管理页） | `43187` | 只绑环回，不对外 |
+| `tlsPort` | HTTPS/wss 监听端口（NAT 打到的那一侧） | `8443` | 写 `0` 表示让系统挑空闲端口 |
+| `extensionPort` | **扩展里写的端口 = NAT 外部端口** | 同 `tlsPort` | 外部 9443 → 内部 8443 就靠它 |
+| `hosts` | Host 白名单（浏览器实际用的地址） | – | 白名单外一律 403 |
+| `publicUrl` | 管理页/连接页的对外地址 | – | 远程运维时必须写公网地址 |
+
+示例：外部 **9443** → 内网 **8443**
+
+```yaml
+- id: browser-tabs
+  config:
+    port: 43187
+    bind: 0.0.0.0
+    hosts: ["36.138.189.24"]
+    tls: true
+    tlsPort: 8443            # 进程在这里监听
+    extensionPort: 9443      # 扩展去连这个（= 面板上的外部端口）
+    publicUrl: "https://36.138.189.24:9443"
+    remote: true
+```
+
+改完重载插件即生效，扩展会自动按新端口重新生成；浏览器里已装的旧扩展也可以在弹窗
+「连接设置」里直接改协议/主机/端口，不必重新生成。端口被占用时：默认端口会**自动换一个空闲端口**
+并在日志里说明，显式配置的端口则**直接报错**（可用 `portFallback`/`tlsPortFallback` 覆盖）。
+
 ## 同一台机器上同时跑 web 端和桌面版
 
 两端共用同一个宿主实现（`dsh-base` 的 `tools`/`typert` + UI 的 `inputTriggers`/`remote`），

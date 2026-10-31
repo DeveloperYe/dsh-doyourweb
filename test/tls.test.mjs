@@ -106,6 +106,24 @@ test("a TLS-enabled bridge accepts the extension over wss and serves the CA", as
       });
     }, /UNABLE_TO_VERIFY|self.signed|unable to verify/i);
 
+    // An external NAT port that differs from the listen port must be what the package
+    // dials, and the Host allowlist must accept it.
+    const shifted = new BrowserBridge({ home: path.join(root, "shifted"), port: 0, bind: "127.0.0.1",
+      hosts: ["browser.example.com"], tls: true, tlsPort: 0, extensionPort: 9443 });
+    try {
+      await shifted.start();
+      const build = shifted.extensionBuilds.find(item => item.label === "browser.example.com");
+      assert.equal(build.endpoint, "wss://browser.example.com:9443/extension",
+        "the extension must dial the published port, not the listen port");
+      assert.notEqual(shifted.tlsPort, 9443, "and the listener stays on its own port");
+      const shiftedSocket = new WebSocket(`wss://127.0.0.1:${shifted.tlsPort}/extension`, ["dsh-browser", shifted.settings.token],
+        { rejectUnauthorized: false, headers: { Origin: `chrome-extension://${shifted.id}`, Host: "browser.example.com:9443" } });
+      await once(shiftedSocket, "open");
+      shiftedSocket.close();
+    } finally {
+      await shifted.close();
+    }
+
     // The CA download needs the per-start secret, like every other management route.
     assert.equal((await fetch(`http://127.0.0.1:${bridge.port}/ca.crt`)).status, 404);
     const ca = await fetch(bridge.secretUrl("/ca.crt"));

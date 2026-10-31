@@ -101,6 +101,9 @@ saveToken.addEventListener("click", async () => {
   } catch (error) { showError(error); }
 });
 unpair.addEventListener("click", async () => {
+  // Remote browsers cannot pair on their own: clearing the token strands the user
+  // until they reinstall the package or copy the token out of the management page.
+  if (!confirm("解除配对会清空这台浏览器里的配对令牌，远程连接将立即断开，且需要重新安装扩展或从 DSH「应用管理 → 远程浏览器」复制令牌才能恢复。确定要解除吗？")) return;
   try { await send({ type: "unpair" }); }
   catch (error) { showError(error); }
 });

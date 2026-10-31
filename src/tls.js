@@ -59,7 +59,8 @@ function createLeaf({ ca, caKey, names, ips }) {
   certificate.serialNumber = `02${forge.util.bytesToHex(forge.random.getBytesSync(8))}`;
   certificate.validity.notBefore = new Date(Date.now() - 60 * 60 * 1000);
   certificate.validity.notAfter = new Date(Date.now() + LEAF_DAYS * 24 * 60 * 60 * 1000);
-  const subject = names[0] || ips[0] || "localhost";
+  // Prefer a real name, then a real address; loopback is only a last resort.
+  const subject = names.find(name => name !== "localhost") || ips.find(ip => ip !== "127.0.0.1") || "localhost";
   certificate.setSubject([{ name: "commonName", value: subject }]);
   certificate.setIssuer(ca.subject.attributes);
   // No authorityKeyIdentifier on purpose: forge's encoder produces an extension that

@@ -83,7 +83,7 @@ async function waitForPairing() {
     const [request] = bridge.pairings.list();
     const code = await badgeCode();
     if (request && /^\d{4}$/.test(code)) {
-      const response = await fetch(new URL("setup/pair", bridge.url), { method: "POST", redirect: "manual",
+      const response = await fetch(bridge.secretUrl("/setup/pair"), { method: "POST", redirect: "manual",
         headers: { "Content-Type": "application/x-www-form-urlencoded", "Sec-Fetch-Site": "same-origin" },
         body: new URLSearchParams({ pin: code, action: "allow" }) });
       assert.equal(response.status, 303, "the badge PIN must approve the pairing request");
@@ -353,7 +353,7 @@ try {
     : { applications: { plans: [], connectors: [], connections: [], policy: { askBeforeInstall: true, trustedPublishers: [] } } };
   const manager = await browser.newPage();
   const errors = []; manager.on("pageerror", error => errors.push(error.message));
-  await manager.goto(`http://127.0.0.1:${bridge.port}/manage`);
+  await manager.goto(bridge.manageUrl());
   await manager.locator("#status").filter({ hasText: "本机连接已就绪" }).waitFor();
   await manager.getByRole("tab", { name: "应用程序" }).click();
   await manager.getByRole("cell", { name: "Unity", exact: true }).waitFor();

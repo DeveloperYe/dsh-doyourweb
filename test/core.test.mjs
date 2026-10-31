@@ -152,13 +152,16 @@ test("the setup page never prints the pairing PIN and refuses forged posts", asy
     const pin = sent[0].params.code;
     assert.match(pin, /^[0-9]{4}$/);
     assert.equal(bridge.pairings.list()[0].code, undefined, "the pending list must not expose the PIN");
-    const response = await fetch(bridge.url);
+    assert.equal((await fetch(bridge.url)).status, 404, "the setup page needs the per-start secret DSH hands out");
+    const response = await fetch(bridge.setupUrl());
     const page = await response.text();
+    const cookie = /dsh_manage=([0-9a-f]+)/.exec(String(response.headers.get("set-cookie")))?.[1];
+    assert.ok(cookie, "the setup page sets the management cookie for its own form");
     const policy = response.headers.get("content-security-policy");
     // The PIN lives in the extension badge only. Rendering it here would let a
     // local process approve the very request it opened.
     assert.equal(page.includes(pin), false, "the pairing PIN must never appear on the page");
-    assert.equal(page.includes(bridge.setupKey), false, "the management key must never appear on the page");
+    assert.equal(page.includes(bridge.manageSecret), false, "the per-start secret must never be rendered into a page");
     assert.match(page, /name="pin"/);
     assert.match(page, /\/setup\/pair/);
     // The folder path is a copy button, not a link: a browser refuses web-page
@@ -175,14 +178,14 @@ test("the setup page never prints the pairing PIN and refuses forged posts", asy
     const pairEndpoint = new URL("setup/pair", bridge.url);
     // A cross-site post cannot approve anything, even with the right PIN.
     const forged = await fetch(pairEndpoint, {
-      method: "POST", headers: { "Content-Type": "application/x-www-form-urlencoded", "Sec-Fetch-Site": "cross-site" },
+      method: "POST", headers: { "Content-Type": "application/x-www-form-urlencoded", "Sec-Fetch-Site": "cross-site", Cookie: `dsh_manage=${cookie}` },
       body: new URLSearchParams({ pin, action: "allow" }),
     });
     assert.equal(forged.status, 403);
     assert.equal(bridge.pairings.list().length, 1);
     // A wrong PIN is refused and never consumes the pending request.
     const guessed = await fetch(pairEndpoint, {
-      method: "POST", headers: { "Content-Type": "application/x-www-form-urlencoded", "Sec-Fetch-Site": "same-origin" },
+      method: "POST", headers: { "Content-Type": "application/x-www-form-urlencoded", "Sec-Fetch-Site": "same-origin", Cookie: `dsh_manage=${cookie}` },
       body: new URLSearchParams({ pin: pin === "0000" ? "0001" : "0000", action: "allow" }),
     });
     assert.equal(guessed.status, 403);
@@ -190,7 +193,7 @@ test("the setup page never prints the pairing PIN and refuses forged posts", asy
     // The page form approves the request once the user types the badge PIN.
     const approved = await fetch(pairEndpoint, {
       method: "POST", redirect: "manual",
-      headers: { "Content-Type": "application/x-www-form-urlencoded", "Sec-Fetch-Site": "same-origin" },
+      headers: { "Content-Type": "application/x-www-form-urlencoded", "Sec-Fetch-Site": "same-origin", Cookie: `dsh_manage=${cookie}` },
       body: new URLSearchParams({ pin, action: "allow" }),
     });
     assert.equal(approved.status, 303);

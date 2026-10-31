@@ -51,14 +51,28 @@ export function extensionProfiles({ bind = "127.0.0.1", port = 43187, hosts = []
   return entries.map(entry => ({ ...entry, key: profileKey(entry) }));
 }
 
-async function copyTree(from, to) {
+async function copyTree(from, to, prefix = "", written = []) {
   await mkdir(to, { recursive: true });
   for (const entry of await readdir(from, { withFileTypes: true })) {
     const source = path.join(from, entry.name);
     const target = path.join(to, entry.name);
-    if (entry.isDirectory()) await copyTree(source, target);
-    else if (entry.isFile()) await copyFile(source, target);
+    const relative = prefix ? `${prefix}/${entry.name}` : entry.name;
+    if (entry.isDirectory()) await copyTree(source, target, relative, written);
+    else if (entry.isFile()) { await copyFile(source, target); written.push(relative); }
   }
+  return written;
+}
+
+/** Remove files that the current build no longer produces; a locked file is left alone. */
+async function prune(root, keep, prefix = "") {
+  const removed = [];
+  for (const entry of await readdir(path.join(root, prefix), { withFileTypes: true })) {
+    const relative = prefix ? `${prefix}/${entry.name}` : entry.name;
+    if (entry.isDirectory()) { removed.push(...await prune(root, keep, relative)); continue; }
+    if (keep.has(relative)) continue;
+    try { await rm(path.join(root, relative), { force: true }); removed.push(relative); } catch { /* keep it */ }
+  }
+  return removed;
 }
 
 /**
@@ -68,10 +82,10 @@ async function copyTree(from, to) {
 export async function buildExtension({ source, outDir, profile, token, key, version = "0.0.0", title }) {
   if (!/^[0-9a-f]{64}$/.test(String(token ?? ""))) throw new Error("The pairing token is missing; start the bridge before generating an extension");
   const manifest = JSON.parse(await readFile(path.join(source, "manifest.json"), "utf8"));
-  await rm(outDir, { recursive: true, force: true });
   await mkdir(outDir, { recursive: true });
-  for (const file of COPIED) await copyFile(path.join(source, file), path.join(outDir, file));
-  for (const directory of COPIED_DIRECTORIES) await copyTree(path.join(source, directory), path.join(outDir, directory));
+  const written = [];
+  for (const file of COPIED) { await copyFile(path.join(source, file), path.join(outDir, file)); written.push(file); }
+  for (const directory of COPIED_DIRECTORIES) await copyTree(path.join(source, directory), path.join(outDir, directory), directory, written);
   // The template config is replaced, never patched: an endpoint plus a token is the
   // only difference between this copy and the stock folder.
   await writeFile(path.join(outDir, "config.js"), [
@@ -84,7 +98,9 @@ export async function buildExtension({ source, outDir, profile, token, key, vers
   const name = `${title || manifest.name}${profile.label === "本机" ? "" : ` · ${profile.label}`}`;
   const generated = { ...manifest, name, short_name: name.slice(0, 12), version, key };
   await writeFile(path.join(outDir, "manifest.json"), `${JSON.stringify(generated, null, 2)}\n`);
-  return { dir: outDir, name, config: { scheme: profile.scheme, host: profile.host, port: profile.port },
+  written.push("config.js", "manifest.json");
+  const removed = await prune(outDir, new Set(written));
+  return { dir: outDir, name, removed, config: { scheme: profile.scheme, host: profile.host, port: profile.port },
     endpoint: `${profile.scheme}://${profile.host.includes(":") && !profile.host.startsWith("[") ? `[${profile.host}]` : profile.host}:${profile.port}/extension` };
 }
 

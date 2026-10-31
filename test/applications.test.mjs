@@ -575,11 +575,12 @@ test("management API rejects cross-origin, missing key and wrong content type", 
   await bridge.start(); t.after(() => bridge.close()); bridge.management = async request => ({ action: request.action });
   const base = `http://127.0.0.1:${bridge.port}`;
   const post = headers => fetch(`${base}/manage/api`, { method: "POST", headers, body: '{"action":"state"}' });
-  assert.equal((await post({ "Content-Type": "application/json" })).status, 403);
-  assert.equal((await post({ "Content-Type": "application/json", "X-DSH-Key": bridge.setupKey, Origin: "https://evil.example" })).status, 403);
-  assert.equal((await post({ "Content-Type": "text/plain", "X-DSH-Key": bridge.setupKey })).status, 403);
-  assert.deepEqual(await (await post({ "Content-Type": "application/json", "X-DSH-Key": bridge.setupKey, Origin: base })).json(), { action: "state" });
-  const page = await fetch(`${base}/manage`); assert.match(page.headers.get("content-security-policy"), /frame-ancestors 'none'/);
+  assert.equal((await post({ "Content-Type": "application/json" })).status, 404, "loopback alone is not an identity");
+  assert.equal((await post({ "Content-Type": "application/json", "X-DSH-Key": bridge.manageSecret, Origin: "https://evil.example" })).status, 403);
+  assert.equal((await post({ "Content-Type": "text/plain", "X-DSH-Key": bridge.manageSecret })).status, 403);
+  assert.deepEqual(await (await post({ "Content-Type": "application/json", "X-DSH-Key": bridge.manageSecret, Origin: base })).json(), { action: "state" });
+  assert.equal((await fetch(`${base}/manage`)).status, 404, "the management page needs the per-start secret");
+  const page = await fetch(bridge.manageUrl()); assert.match(page.headers.get("content-security-policy"), /frame-ancestors 'none'/);
   const { html } = managementPage("fixture"); new vm.Script(html.match(/<script nonce="[^"]+">([\s\S]*)<\/script>/)[1]);
 });
 

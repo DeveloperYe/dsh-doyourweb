@@ -115,9 +115,9 @@ test("unapproved pairing sockets close on expiry or denial without waiting for s
     const challenge = once(denied, "message");
     const closing = once(denied, "close");
     const request = JSON.parse((await challenge)[0]);
-    const response = await fetch(new URL("setup/pair", bridge.url), {
+    const response = await fetch(bridge.secretUrl("/setup/pair"), {
       method: "POST", redirect: "manual", body: new URLSearchParams({
-        key: bridge.setupKey, id: request.params.id, action: "deny",
+        id: request.params.id, action: "deny",
       }),
     });
     assert.equal(response.status, 303);

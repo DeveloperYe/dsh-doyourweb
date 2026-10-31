@@ -23,6 +23,15 @@ function escapeHtml(value) {
   return String(value).replace(/[&<>"']/g, c => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[c]));
 }
 
+/** Shown to anything that reaches loopback without the management secret. */
+function deniedPage() {
+  return `<!doctype html><html lang="zh-CN"><meta charset="utf-8"><title>DSH DoYourWeb</title>
+<style>body{margin:0;padding:48px 20px;font:14px/1.7 system-ui,"Microsoft YaHei",sans-serif;color:#253b38;background:#f2f5f3}main{max-width:640px;margin:auto;background:#fff;border:1px solid #dce5df;border-radius:16px;padding:26px}h1{font-size:20px;margin:0 0 10px}code{background:#f2f6f3;border-radius:6px;padding:2px 6px}</style>
+<main><h1>这个页面只能从 DSH 内部打开</h1>
+<p>请回到 DSH：输入 <code>/apps</code> 打开应用管理，或输入 <code>/browser</code> 打开连接页面，链接会带着本次启动的管理密钥。</p>
+<p>浏览器扩展不需要这个页面：下载好的扩展直接「加载解压的扩展」即可。</p></main></html>`;
+}
+
 export class BrowserBridge extends EventEmitter {
   constructor({ home, port = 43187, extensionSource, idleTimeoutMs = 120000, bind = "127.0.0.1", hosts = [], remote = false,
     extensionScheme = "ws", extensionPort, extensionProfiles: profiles = [], autoBuild = true } = {}) {
@@ -45,7 +54,10 @@ export class BrowserBridge extends EventEmitter {
     this.detachments = new Map();
     this.idleTimeoutMs = idleTimeoutMs;
     this.pairings = new Pairings();
-    this.setupKey = randomBytes(16).toString("hex");
+    // The management surface is gated by a secret that is never written into any
+    // HTTP response: DSH opens the page with ?k=<secret>, everything else gets an
+    // explanation page. A local process can reach loopback but cannot read this.
+    this.manageSecret = randomBytes(32).toString("hex");
     this.pairingFailures = 0;
     this.sequence = 0;
   }
@@ -69,6 +81,23 @@ export class BrowserBridge extends EventEmitter {
     if (!this.localBind()) allowed.add(this.bind.toLowerCase());
     for (const entry of this.hosts) allowed.add(entry);
     return allowed.has(match[1].toLowerCase());
+  }
+
+  /** A management URL carrying the per-start secret DSH hands to the browser. */
+  secretUrl(pathname) {
+    return `http://127.0.0.1:${this.port}${pathname}?k=${this.manageSecret}`;
+  }
+
+  manageUrl() { return this.secretUrl("/manage"); }
+
+  setupUrl() { return this.secretUrl("/setup"); }
+
+  /** The request already presented the management secret, in the URL or a cookie. */
+  authorized(request, url) {
+    const cookie = /(?:^|;\s*)dsh_manage=([0-9a-f]{32,})/.exec(request.headers.cookie || "")?.[1];
+    return sameSecret(url.searchParams.get("k") ?? "", this.manageSecret)
+      || sameSecret(request.headers["x-dsh-key"], this.manageSecret)
+      || sameSecret(cookie, this.manageSecret);
   }
 
   /** Management, setup and pairing exist only for connections from this machine. */
@@ -172,7 +201,11 @@ export class BrowserBridge extends EventEmitter {
    */
   handleUpgrade(request, socket, head) {
     if (!this.hostAllowed(request.headers.host)) return socket.destroy();
-    const pathname = new URL(request.url, "http://127.0.0.1").pathname;
+    // Same rule as handleHttp: a malformed target must not throw inside an event
+    // handler, where it would surface as an uncaught exception.
+    let pathname;
+    try { pathname = new URL(request.url, "http://127.0.0.1").pathname; }
+    catch { return socket.destroy(); }
     if (pathname === "/extension") {
       const protocols = (request.headers["sec-websocket-protocol"] || "").split(",").map(s => s.trim());
       if (!this.trustedOrigin(request.headers.origin)) return socket.destroy();
@@ -245,12 +278,26 @@ export class BrowserBridge extends EventEmitter {
   }
 
   async handleHttp(request, response) {
+    // A malformed request target must never escape as an unhandled rejection: Node
+    // would terminate the whole DSH process on one bad request.
+    let url;
+    try { url = new URL(request.url, "http://127.0.0.1"); }
+    catch { response.writeHead(400, { "Content-Type": "text/plain; charset=utf-8" }).end("Bad request"); return; }
     if (!this.hostAllowed(request.headers.host)) { response.writeHead(403).end(); return; }
-    const pathname = new URL(request.url, "http://127.0.0.1").pathname;
+    const pathname = url.pathname;
     // Management, pairing and setup stay local to this machine even when the
     // bridge is published for a remote browser: a published port must never hand
     // out the management surface.
     if (!BrowserBridge.loopback(request)) { response.writeHead(404).end(); return; }
+    // Everything except the extension handshake needs the per-start secret that
+    // only DSH can hand out; loopback alone is not an identity.
+    if (!this.authorized(request, url)) {
+      if (pathname === "/manage" || pathname === "/setup" || pathname === "/extension.zip") {
+        response.writeHead(404, { "Content-Type": "text/html; charset=utf-8", "Cache-Control": "no-store" }).end(deniedPage());
+        return;
+      }
+      response.writeHead(404).end(); return;
+    }
     if (pathname === "/manage/api" && request.method === "POST") return this.handleManagement(request, response);
     if (request.method === "POST" && pathname === "/setup/pair") return this.handlePairPost(request, response);
     if (request.method !== "GET") { response.writeHead(405).end(); return; }
@@ -260,7 +307,7 @@ export class BrowserBridge extends EventEmitter {
       // with this HttpOnly cookie, so a local process cannot read the key back by
       // fetching the management page.
       response.writeHead(200, { "Content-Type": "text/html; charset=utf-8", "Cache-Control": "no-store", "Referrer-Policy": "no-referrer",
-        "Set-Cookie": `dsh_manage=${this.setupKey}; HttpOnly; SameSite=Strict; Path=/`,
+        "Set-Cookie": `dsh_manage=${this.manageSecret}; HttpOnly; SameSite=Strict; Path=/`,
         "Content-Security-Policy": `default-src 'none'; connect-src 'self'; style-src 'unsafe-inline'; script-src 'nonce-${nonce}'; base-uri 'none'; frame-ancestors 'none'` });
       response.end(html); return;
     }
@@ -283,7 +330,9 @@ export class BrowserBridge extends EventEmitter {
     // one behind the copy buttons, because a browser refuses web-page navigation to
     // `chrome://`/`edge://`, so opening the extension manager stays a user action.
     const nonce = randomBytes(16).toString("base64");
+    // The form posts back with this cookie, so the PIN endpoint needs no key field.
     response.writeHead(200, { "Content-Type": "text/html; charset=utf-8", "Cache-Control": "no-store",
+      "Set-Cookie": `dsh_manage=${this.manageSecret}; HttpOnly; SameSite=Strict; Path=/`,
       "Content-Security-Policy": `default-src 'none'; style-src 'unsafe-inline'; script-src 'nonce-${nonce}'; base-uri 'none'; frame-ancestors 'none'` });
     response.end(this.setupPage(nonce));
   }
@@ -291,7 +340,7 @@ export class BrowserBridge extends EventEmitter {
   handleManagement(request, response) {
     const origin = `http://127.0.0.1:${this.port}`;
     const cookie = /(?:^|;\s*)dsh_manage=([0-9a-f]{32,})/.exec(request.headers.cookie || "")?.[1];
-    if (!sameSecret(request.headers["x-dsh-key"] ?? cookie, this.setupKey)
+    if (!sameSecret(request.headers["x-dsh-key"] ?? cookie, this.manageSecret)
       || (request.headers.origin && request.headers.origin !== origin)
       || (request.headers["sec-fetch-site"] && request.headers["sec-fetch-site"] !== "same-origin")
       || request.headers["content-type"]?.split(";")[0] !== "application/json") { response.writeHead(403).end(); return; }

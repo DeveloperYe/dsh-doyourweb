@@ -113,11 +113,16 @@ test("the bridge generates one extension per endpoint and serves it over loopbac
       assert.match(build.id, /^[a-p]{32}$/);
       assert.ok((await stat(build.zip)).size > 0);
     }
-    const download = await fetch(`http://127.0.0.1:${bridge.port}/extension.zip?p=${encodeURIComponent(local.key)}`);
+    const page = await fetch(bridge.manageUrl());
+    const cookie = /dsh_manage=([0-9a-f]+)/.exec(String(page.headers.get("set-cookie")))?.[1];
+    const download = await fetch(`http://127.0.0.1:${bridge.port}/extension.zip?p=${encodeURIComponent(local.key)}`,
+      { headers: { Cookie: `dsh_manage=${cookie}` } });
     assert.equal(download.status, 200);
     assert.equal(download.headers.get("content-type"), "application/zip");
     assert.equal((await download.arrayBuffer()).byteLength, local.bytes);
-    assert.equal((await fetch(`http://127.0.0.1:${bridge.port}/extension.zip?p=nope`)).status, 404);
+    assert.equal((await fetch(`http://127.0.0.1:${bridge.port}/extension.zip?p=${encodeURIComponent(local.key)}`)).status, 404,
+      "the archive carries the pairing token, so the management cookie is required");
+    assert.equal((await fetch(`http://127.0.0.1:${bridge.port}/extension.zip?p=nope`, { headers: { Cookie: `dsh_manage=${cookie}` } })).status, 404);
     // A remote peer never reaches the token-bearing archive.
     const response = { status: undefined, writeHead(code) { this.status = code; return this; }, end() { return this; } };
     await bridge.handleHttp({ method: "GET", url: `/extension.zip?p=${local.key}`, headers: { host: `10.0.0.9:${bridge.port}` },

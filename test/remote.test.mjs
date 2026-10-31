@@ -43,19 +43,21 @@ test("management, setup and pairing answer only connections from this machine", 
   const root = await mkdtemp(path.join(os.tmpdir(), "dsh-remote-gate-"));
   const bridge = new BrowserBridge({ home: path.join(root, "bridge"), port: 43187, bind: "0.0.0.0", remote: true, hosts: ["10.0.0.9"] });
   try {
-    const respond = (pathname, remoteAddress, host = "10.0.0.9:43187") => {
+    const respond = async (pathname, remoteAddress, host = "10.0.0.9:43187") => {
       const response = { status: undefined, writeHead(code) { this.status = code; return this; }, end() { return this; } };
-      bridge.handleHttp({ method: "GET", url: pathname, headers: { host }, socket: { remoteAddress } }, response);
+      await bridge.handleHttp({ method: "GET", url: pathname, headers: { host }, socket: { remoteAddress } }, response);
       return response.status;
     };
+    const secret = `?k=${bridge.manageSecret}`;
     assert.equal(BrowserBridge.loopback({ socket: { remoteAddress: "127.0.0.1" } }), true);
     assert.equal(BrowserBridge.loopback({ socket: { remoteAddress: "::ffff:127.0.0.1" } }), true);
     assert.equal(BrowserBridge.loopback({ socket: { remoteAddress: "10.0.0.9" } }), false);
-    assert.equal(respond("/manage", "10.0.0.9"), 404, "a published bridge must not expose management");
-    assert.equal(respond("/setup", "10.0.0.9"), 404);
-    assert.equal(respond("/manage", "127.0.0.1"), 200);
-    assert.equal(respond("/setup", "127.0.0.1"), 200);
-    assert.equal(respond("/manage", "10.0.0.9", "evil.example:43187"), 403, "an unlisted Host is refused first");
+    assert.equal(await respond(`/manage${secret}`, "10.0.0.9"), 404, "a published bridge must not expose management");
+    assert.equal(await respond(`/setup${secret}`, "10.0.0.9"), 404);
+    assert.equal(await respond("/manage", "127.0.0.1"), 404, "loopback without the per-start secret is refused");
+    assert.equal(await respond(`/manage${secret}`, "127.0.0.1"), 200);
+    assert.equal(await respond(`/setup${secret}`, "127.0.0.1"), 200);
+    assert.equal(await respond(`/manage${secret}`, "10.0.0.9", "evil.example:43187"), 403, "an unlisted Host is refused first");
   } finally {
     await bridge.close();
     await rm(root, { recursive: true, force: true });
@@ -135,23 +137,34 @@ test("pairing PINs are matched without leaking them and repeated misses clear pe
   assert.equal(pairings.request, pairings.request);
 });
 
-test("the client cookie, not a page-embedded key, authenticates the management API", async () => {
+test("the management page is gated by the per-start secret, then by its cookie", async () => {
   const root = await mkdtemp(path.join(os.tmpdir(), "dsh-manage-cookie-"));
   const bridge = new BrowserBridge({ home: path.join(root, "bridge"), port: 0 });
   try {
     await bridge.start();
     bridge.management = async request => ({ action: request.action });
-    const page = await fetch(`http://127.0.0.1:${bridge.port}/manage`);
+    const base = `http://127.0.0.1:${bridge.port}`;
+    // Loopback alone is not an identity: without the secret DSH hands out, the page
+    // is not served at all, so a local process cannot harvest the key from it.
+    const blind = await fetch(`${base}/manage`);
+    assert.equal(blind.status, 404);
+    assert.equal(blind.headers.get("set-cookie"), null);
+    const page = await fetch(bridge.manageUrl());
+    assert.equal(page.status, 200);
     const body = await page.text();
-    assert.equal(body.includes(bridge.setupKey), false, "the page must not embed the management key");
+    assert.equal(body.includes(bridge.manageSecret), false, "the secret never appears in the page body");
     const cookie = /dsh_manage=([0-9a-f]+)/.exec(String(page.headers.get("set-cookie")))?.[1];
-    assert.ok(cookie, "the page must set the HttpOnly management cookie");
-    const post = headers => fetch(`http://127.0.0.1:${bridge.port}/manage/api`, { method: "POST",
+    assert.ok(cookie, "the page sets the HttpOnly management cookie");
+    const post = headers => fetch(`${base}/manage/api`, { method: "POST",
       headers: { "Content-Type": "application/json", ...headers }, body: '{"action":"state"}' });
-    assert.equal((await post({})).status, 403, "no credential means no management");
-    assert.equal((await post({ Cookie: "dsh_manage=deadbeef" })).status, 403);
+    assert.equal((await post({})).status, 404, "no credential means no management");
+    assert.equal((await post({ Cookie: "dsh_manage=deadbeef" })).status, 404, "a wrong cookie is refused before routing");
     assert.equal((await post({ Cookie: `dsh_manage=${cookie}` })).status, 200);
-    assert.equal((await post({ "X-DSH-Key": bridge.setupKey })).status, 200, "the CLI surface keeps working");
+    assert.equal((await post({ "X-DSH-Key": bridge.manageSecret })).status, 200, "the CLI surface keeps working");
+    // The same credential gates the token-bearing archive.
+    assert.equal((await fetch(`${base}/extension.zip?p=nope`)).status, 404);
+    assert.equal((await fetch(`${base}/extension.zip?p=nope`, { headers: { Cookie: `dsh_manage=${cookie}` } })).status, 404,
+      "an authorised request for an unknown profile is still 404");
   } finally {
     await bridge.close();
     await rm(root, { recursive: true, force: true });

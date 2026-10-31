@@ -75,6 +75,11 @@ export async function apply(ctx, config = {}) {
   const annotations = new Annotations(bridge);
   bridge.decoratePage = (ref, page) => annotations.attach(ref, page);
   bridge.beforeRelease = ref => annotations.detach(ref);
+  // Two different URLs on purpose:
+  //  - managementUrl is shown to the model and to the human in messages, so it must
+  //    never carry the per-start secret (that would put it into model context);
+  //  - service.manage()/service.setup() hand the secret URL to the DSH client, which
+  //    opens it in the browser where the cookie is then established.
   const managementUrl = `http://127.0.0.1:${bridge.port}/manage`;
   /** Generated extensions plus the loopback download link for each one. */
   const decorateExtensions = source => (source.extensionBuilds || []).map(entry => ({ ...entry,
@@ -117,11 +122,11 @@ export async function apply(ctx, config = {}) {
 
   const service = {
     async list(request = {}) { return { tabs: bridge.list(request.query || ""), connected: bridge.profiles.size > 0 }; },
-    async setup() { return { url: bridge.url, extensionPath: bridge.extensionPath }; },
+    async setup() { return { url: bridge.setupUrl(), extensionPath: bridge.extensionPath }; },
     async focus(request) { await bridge.focus(request.ref); return { ok: true }; },
     async apps(request = {}) { try { return { apps: await applications.list(request.query || "") }; } catch (error) { return { apps: [], error: error.message }; } },
     async annotationSession(request) { return annotations.currentSession(request); },
-    async manage() { return { url: managementUrl }; },
+    async manage() { return { url: bridge.manageUrl() }; },
   };
   service.typertRemote = { service, serviceKey: "browserTabs", namespace: "browserTabs" };
   ctx.provide("browserTabs", service);

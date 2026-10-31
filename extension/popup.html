@@ -4,7 +4,7 @@
 <h1>DSH DoYourWeb</h1>
 <label>&#36830;&#25509; DSH <input id="enabled" type="checkbox"></label>
 <output id="status"></output>
-<div class="row"><button id="annotate">批注当前页面</button><button id="manage">应用管理</button></div>
+<div class="row"><button id="annotate">批注当前页面</button><button id="manage">应用管理</button><button id="check-link">检查连接</button></div>
 <div id="pairing" hidden>
   <div class="hint">&#25226;&#19979;&#38754;&#36825; 4 &#20301;&#25968;&#23383;&#36755;&#20837; DSH &#30340;&#36830;&#25509;&#39029;&#38754;&#65292;&#21363;&#21487;&#23436;&#25104;&#37197;&#23545;&#12290;</div>
   <code id="code"></code>
@@ -18,6 +18,7 @@
 <p class="hint" id="endpoint"></p></details>
 <div id="ca" hidden>
   <div class="row"><button id="install-ca">安装 CA 证书（下载）</button></div>
+  <p class="hint" id="link-hint">显示离线时先点「检查连接」：弹出的是<b>证书警告</b> → CA 没装好或浏览器没重启；弹出「只能从 DSH 内部打开」的说明页 → 证书正常，问题在令牌或地址。</p>
   <p class="hint" id="ca-hint">这份扩展连的是自签名 HTTPS（wss）。首次使用请先信任它自带的 CA：点上面的按钮下载 → <b>双击文件</b> → 「安装证书」→ 选择<b>本地计算机</b> → 放入「<b>受信任的根证书颁发机构</b>」→ 确认。只需一次，之后自动连接。</p>
 </div>
 <p class="hint" id="file-access"></p>

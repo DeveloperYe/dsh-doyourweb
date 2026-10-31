@@ -39,6 +39,18 @@ if (config.ca) {
     link.remove();
   });
 }
+// A browser hides certificate errors from extension JavaScript, so the only honest
+// diagnostic is to let the user see the page itself: a warning means the CA is not
+// trusted yet, the gate explanation means TLS is fine and the problem is elsewhere.
+document.querySelector("#check-link").addEventListener("click", async () => {
+  try {
+    const state = await chrome.runtime.sendMessage({ type: "status" });
+    const scheme = state.scheme === "wss" ? "https" : "http";
+    const host = state.host ?? "127.0.0.1";
+    const selectedPort = Number.isSafeInteger(state.port) ? state.port : 43187;
+    await chrome.tabs.create({ url: `${scheme}://${host}:${selectedPort}/setup` });
+  } catch (error) { showError(error); }
+});
 document.querySelector("#file-access").textContent = await chrome.extension.isAllowedFileSchemeAccess()
   ? "已允许引用本地 HTML 页面" : "引用本地 HTML：请在浏览器扩展详情中开启“允许访问文件网址”。";
 

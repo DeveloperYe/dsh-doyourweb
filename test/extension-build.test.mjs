@@ -1,6 +1,5 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
-import { execFileSync } from "node:child_process";
 import { mkdtemp, readFile, readdir, rm, stat } from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
@@ -73,6 +72,40 @@ test("a built extension carries its endpoint and token and is a loadable folder"
   }
 });
 
+/** Independent reader: walk the end-of-central-directory record and every entry. */
+function readZip(buffer) {
+  let eocd = -1;
+  for (let offset = buffer.length - 22; offset >= 0; offset--) {
+    if (buffer.readUInt32LE(offset) === 0x06054b50) { eocd = offset; break; }
+  }
+  assert.notEqual(eocd, -1, "the archive must end with an end-of-central-directory record");
+  const total = buffer.readUInt16LE(eocd + 10);
+  let cursor = buffer.readUInt32LE(eocd + 16);
+  const entries = [];
+  for (let index = 0; index < total; index++) {
+    assert.equal(buffer.readUInt32LE(cursor), 0x02014b50, "central directory signature");
+    const method = buffer.readUInt16LE(cursor + 10);
+    const compressedSize = buffer.readUInt32LE(cursor + 20);
+    const uncompressedSize = buffer.readUInt32LE(cursor + 24);
+    const nameLength = buffer.readUInt16LE(cursor + 28);
+    const extraLength = buffer.readUInt16LE(cursor + 30);
+    const commentLength = buffer.readUInt16LE(cursor + 32);
+    const localOffset = buffer.readUInt32LE(cursor + 42);
+    const name = buffer.subarray(cursor + 46, cursor + 46 + nameLength).toString("utf8");
+    entries.push({ name, method, compressedSize, uncompressedSize, localOffset });
+    cursor += 46 + nameLength + extraLength + commentLength;
+  }
+  return entries;
+}
+
+function readEntry(buffer, entry) {
+  const local = entry.localOffset;
+  assert.equal(buffer.readUInt32LE(local), 0x04034b50, "local header signature");
+  const start = local + 30 + buffer.readUInt16LE(local + 26) + buffer.readUInt16LE(local + 28);
+  const body = buffer.subarray(start, start + entry.compressedSize);
+  return entry.method === 8 ? zlib.inflateRawSync(body) : body;
+}
+
 test("the generated zip is a real archive a user can unzip", async () => {
   const root = await mkdtemp(path.join(os.tmpdir(), "dsh-build-zip-"));
   try {
@@ -90,10 +123,28 @@ test("the generated zip is a real archive a user can unzip", async () => {
     const body = bytes.subarray(30 + nameLength + extraLength, 30 + nameLength + extraLength + size);
     const unpacked = method === 8 ? zlib.inflateRawSync(body) : body;
     assert.deepEqual(unpacked, await readFile(path.join(built.dir, name)));
-    // Cross-check with the platform unzip: libarchive in tar reads zip on Windows too.
-    const listing = execFileSync("tar", ["-tf", zip.file], { encoding: "utf8" });
-    assert.match(listing, /manifest\.json/);
-    assert.match(listing, /config\.js/);
+    // Read it back through an independent parser: every entry must unpack to the
+    // file the build actually wrote.
+    const entries = readZip(bytes);
+    assert.equal(entries.length, zip.entries);
+    const names = entries.map(entry => entry.name).sort();
+    const walk = async (dir, prefix = "") => {
+      const out = [];
+      for (const item of await readdir(dir, { withFileTypes: true })) {
+        const relative = prefix ? `${prefix}/${item.name}` : item.name;
+        if (item.isDirectory()) out.push(...await walk(path.join(dir, item.name), relative));
+        else out.push(relative);
+      }
+      return out;
+    };
+    assert.deepEqual(names, (await walk(built.dir)).sort(), "the archive must hold exactly the files on disk");
+    assert.ok(names.includes("manifest.json") && names.includes("config.js"));
+    assert.ok(names.includes("icons/icon-128.png"), "nested files keep forward slashes");
+    for (const entry of entries) {
+      const unpacked = readEntry(bytes, entry);
+      assert.deepEqual(unpacked, await readFile(path.join(built.dir, entry.name)), entry.name);
+      assert.equal(unpacked.length, entry.uncompressedSize);
+    }
     assert.ok((await stat(zip.file)).size < 200 * 1024);
   } finally {
     await rm(root, { recursive: true, force: true });

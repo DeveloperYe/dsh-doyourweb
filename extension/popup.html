@@ -16,6 +16,10 @@
 <div class="row"><label for="token" class="hint">配对令牌</label><input id="token" type="password" autocomplete="off" spellcheck="false" placeholder="远程连接时粘贴"></div>
 <div class="row"><button id="save-token">应用令牌</button><button id="unpair" hidden>解除配对</button></div>
 <p class="hint" id="endpoint"></p></details>
+<div id="ca" hidden>
+  <div class="row"><button id="install-ca">安装 CA 证书（下载）</button></div>
+  <p class="hint" id="ca-hint">这份扩展连的是自签名 HTTPS（wss）。首次使用请先信任它自带的 CA：点上面的按钮下载 → <b>双击文件</b> → 「安装证书」→ 选择<b>本地计算机</b> → 放入「<b>受信任的根证书颁发机构</b>」→ 确认。只需一次，之后自动连接。</p>
+</div>
 <p class="hint" id="file-access"></p>
 <style>body{width:320px;padding:20px;background:#f5f8f5;color:#263f33}h1{font-size:17px;letter-spacing:-.3px}output{background:#e6f0e9;border:1px solid #cde0d2;border-radius:10px;padding:10px 12px;margin:14px 0;color:#346448}button{cursor:pointer;border:1px solid #d2dfd5;border-radius:8px;background:#fff;padding:8px 12px;color:#315e44;font:inherit;font-size:12px}button:hover{background:#e8f1eb}button:focus-visible,input:focus-visible,summary:focus-visible{outline:2px solid #54896a;outline-offset:2px}#annotate{background:#236b4c;border-color:#236b4c;color:white;flex:1}#setup{width:100%;margin-top:10px}#pairing{border-color:#bdd5c4;background:white;padding:14px;border-radius:10px}#code{margin-top:10px;font-size:28px;color:#236b4c}.row{gap:8px}details{border-top:1px solid #dae4dd;margin-top:18px;padding-top:12px}summary{font-size:12px;color:#65796b;cursor:pointer}input[type=number]{border:1px solid #ccd9d0;border-radius:6px;padding:5px;width:80px}.hint{color:#718476}#file-access{margin-bottom:0}</style>
 <script type="module" src="popup.js"></script></html>

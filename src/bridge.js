@@ -208,7 +208,8 @@ export class BrowserBridge extends EventEmitter {
     for (const profile of profiles) {
       const dir = path.join(this.extensionOutDir, profile.key);
       const built = await buildExtension({ source: this.extensionSource, outDir: dir, profile,
-        token: this.settings.token, key: this.settings.key, version: this.version });
+        token: this.settings.token, key: this.settings.key, version: this.version,
+        ca: this.tlsActive && this.ca ? { der: this.ca.caDer } : undefined });
       const zip = await zipDirectory(dir, path.join(this.extensionOutDir, `${profile.key}.zip`));
       builds.push({ key: profile.key, label: profile.label, endpoint: built.endpoint, dir, zip: zip.file,
         entries: zip.entries, bytes: zip.bytes, id: this.installId });

@@ -1,5 +1,17 @@
 # 更新记录
 
+## 0.3.2 · 2026-10-31（DeveloperYe fork）
+
+- **CA 证书随扩展打包**：TLS 模式下生成的扩展内带 `ca.crt`（DER），并写入
+  `web_accessible_resources` 与 `config.ca`；弹出页新增「安装 CA 证书（下载）」按钮，
+  一键导出 `dsh-doyourweb-ca.crt`，旁边就是三步图文的信任引导。
+- 明确记录边界：扩展**不能**自动把根证书装进信任库——Chrome/Edge 无此 API
+  （`chrome.certificateProvider` 仅 ChromeOS 且用于客户端证书），信任根属于操作系统受保护存储，
+  写入需 Native Messaging 宿主且 Windows 必弹确认框。要彻底免除这一步只能换公有证书
+  （Let's Encrypt / Cloudflare 橙云）。
+- 测试：`test/tls.test.mjs` 增加断言——包内必须有 `ca.crt`、manifest 必须声明
+  `web_accessible_resources`、`config.js` 必须带 `"ca":"ca.crt"`、popup 必须含导出按钮。
+
 ## 0.3.1 · 2026-10-31（DeveloperYe fork）
 
 - 明确并验证 **web 端 / 桌面版两端可跑**：两端共用宿主实现，插件代码路径一致；新增

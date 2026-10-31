@@ -1,3 +1,5 @@
+import { config } from "./config.js";
+
 const enabled = document.querySelector("#enabled");
 const status = document.querySelector("#status");
 const pairing = document.querySelector("#pairing");
@@ -21,6 +23,22 @@ document.querySelector("#setup").addEventListener("click", async () => {
     await chrome.tabs.create({ url: `http://127.0.0.1:${selectedPort}/setup` });
   } catch (error) { showError(error); }
 });
+// The CA travels inside this package. Downloading it is all an extension may do:
+// adding a root to the trust store is an OS action with no extension API (the only
+// certificate API, certificateProvider, is ChromeOS-only), and Windows asks for its
+// own confirmation anyway.
+if (config.ca) {
+  const panel = document.querySelector("#ca");
+  panel.hidden = false;
+  document.querySelector("#install-ca").addEventListener("click", () => {
+    const link = document.createElement("a");
+    link.href = chrome.runtime.getURL(config.ca);
+    link.download = "dsh-doyourweb-ca.crt";
+    document.body.append(link);
+    link.click();
+    link.remove();
+  });
+}
 document.querySelector("#file-access").textContent = await chrome.extension.isAllowedFileSchemeAccess()
   ? "已允许引用本地 HTML 页面" : "引用本地 HTML：请在浏览器扩展详情中开启“允许访问文件网址”。";
 

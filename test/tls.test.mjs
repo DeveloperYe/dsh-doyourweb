@@ -75,6 +75,16 @@ test("a TLS-enabled bridge accepts the extension over wss and serves the CA", as
     assert.equal(published.endpoint, `wss://browser.example.com:${bridge.tlsPort}/extension`);
     assert.match(await readFile(path.join(published.dir, "config.js"), "utf8"), /"scheme":"wss"/);
 
+    // The package carries the CA so the popup can offer a one-click export. The
+    // browser cannot install it by itself: no extension API writes the trust store.
+    const shipped = await readFile(path.join(published.dir, "ca.crt"));
+    assert.ok(shipped.length > 400, "the CA must travel inside the extension");
+    const manifest = JSON.parse(await readFile(path.join(published.dir, "manifest.json"), "utf8"));
+    assert.deepEqual(manifest.web_accessible_resources, [{ resources: ["ca.crt"], matches: ["<all_urls>"] }],
+      "the popup can only reach the file through web_accessible_resources");
+    assert.match(await readFile(path.join(published.dir, "config.js"), "utf8"), /"ca":"ca.crt"/);
+    assert.match(await readFile(path.join(published.dir, "popup.js"), "utf8"), /install-ca/);
+
     // Chain validation against this CA is asserted above with tls.connect; here the
     // point is that the wss route works end to end, so the client skips the check.
     const socket = new WebSocket(`wss://127.0.0.1:${bridge.tlsPort}/extension`, ["dsh-browser", bridge.settings.token],

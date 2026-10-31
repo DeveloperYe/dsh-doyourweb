@@ -37,7 +37,7 @@ function deniedPage() {
 export class BrowserBridge extends EventEmitter {
   constructor({ home, port = 43187, extensionSource, idleTimeoutMs = 120000, bind = "127.0.0.1", hosts = [], remote = false,
     extensionScheme = "ws", extensionPort, extensionProfiles: profiles = [], autoBuild = true, publicUrl,
-    tls = false, tlsPort = 8443, tlsIps = [] } = {}) {
+    tls = false, tlsPort = 8443, tlsIps = [], portFallback = false } = {}) {
     super();
     this.home = home;
     this.port = port;
@@ -52,6 +52,8 @@ export class BrowserBridge extends EventEmitter {
     this.tlsPort = Number(tlsPort) || 8443;
     this.tlsIps = (Array.isArray(tlsIps) ? tlsIps : []).map(value => String(value).trim()).filter(Boolean);
     this.tlsActive = false;
+    this.portFallback = portFallback === true;
+    this.portFallbackUsed = false;
     this.managementFailures = new Map();
     this.autoBuild = autoBuild !== false;
     this.extensionOutDir = path.join(home || ".", "extensions");
@@ -285,13 +287,27 @@ export class BrowserBridge extends EventEmitter {
     this.server = http.createServer((request, response) => { void this.handleHttp(request, response); });
     this.ws = new WebSocketServer({ noServer: true, maxPayload: 8 * 1024 * 1024 });
     this.server.on("upgrade", (request, socket, head) => this.handleUpgrade(request, socket, head));
-    await new Promise((resolve, reject) => {
-      this.server.once("error", reject);
-      this.server.listen(this.port, this.bind, resolve);
-    }).catch(error => {
-      if (error.code !== "EADDRINUSE") throw error;
-      throw new Error(`Browser bridge port ${this.port} is already in use. Another DSH instance, another application, or a bridge leaked by an older plugin version owns it; stop that instance or set a different "port" in the plugin settings.`);
+    const listen = requested => new Promise((resolve, reject) => {
+      const onError = error => { this.server.off("listening", onListening); reject(error); };
+      const onListening = () => { this.server.off("error", onError); resolve(); };
+      this.server.once("error", onError);
+      this.server.once("listening", onListening);
+      this.server.listen(requested, this.bind);
     });
+    try {
+      await listen(this.port);
+    } catch (error) {
+      if (error.code !== "EADDRINUSE") throw error;
+      // DSH web and the desktop app can run side by side on one machine and would
+      // both want the default port. With the default (not an explicit setting) take
+      // an ephemeral one instead of failing: the generated extension embeds whatever
+      // port was actually used, so nothing else has to change.
+      if (!this.portFallback) {
+        throw new Error(`Browser bridge port ${this.port} is already in use. Another DSH instance, another application, or a bridge leaked by an older plugin version owns it; stop that instance or set a different "port" in the plugin settings.`);
+      }
+      await listen(0);
+      this.portFallbackUsed = true;
+    }
     this.port = this.server.address().port;
     this.url = `http://127.0.0.1:${this.port}/setup`;
     if (this.tlsEnabled) await this.startTls();

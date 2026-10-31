@@ -1,6 +1,6 @@
 {
   "name": "dsh-doyourweb",
-  "version": "0.3.0",
+  "version": "0.3.1",
   "description": "Browser tabs, element annotations and MCP/CLI-first desktop app control for DeepSeek Harness",
   "type": "module",
   "license": "MIT",
@@ -69,7 +69,8 @@
     "prepack": "npm run build",
     "icons": "node scripts/generate-icons.mjs",
     "screenshot": "node scripts/generate-setup-screenshot.mjs",
-    "test:generated": "node scripts/test-generated-extension.mjs"
+    "test:generated": "node scripts/test-generated-extension.mjs",
+    "verify:host": "node scripts/verify-host.mjs"
   },
   "dependencies": {
     "@modelcontextprotocol/sdk": "1.32.1",

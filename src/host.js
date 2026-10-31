@@ -59,10 +59,12 @@ export async function apply(ctx, config = {}) {
     bind: config.bind || "127.0.0.1", hosts: config.hosts || [], remote: config.remote === true,
     extensionScheme: config.extensionScheme || "ws", extensionPort: config.extensionPort,
     extensionProfiles: config.profiles || [], autoBuild: config.autoBuild !== false,
-    publicUrl: config.publicUrl, tls: config.tls === true, tlsPort: config.tlsPort || 8443, tlsIps: config.tlsIps || [] });
+    publicUrl: config.publicUrl, tls: config.tls === true, tlsPort: config.tlsPort || 8443, tlsIps: config.tlsIps || [],
+    portFallback: config.port === undefined || config.portFallback === true });
   await ctx.effect(async () => {
     try { await bridge.start(); }
     catch (error) { await bridge.close(); throw error; }
+    if (bridge.portFallbackUsed) logger?.warn(`${PACKAGE}: port ${config.port ?? 43187} was busy, listening on ${bridge.port} instead (the generated extension uses that port)`);
     return () => bridge.close();
   }, `${PACKAGE}: bridge`);
   const engine = new BrowserEngine(bridge, { snapshotChars: config.snapshotChars || 2400, artifactDir: path.join(home, "captures") });

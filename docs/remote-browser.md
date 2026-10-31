@@ -96,6 +96,29 @@ cloudflared tunnel --url http://127.0.0.1:43187
 - Tailscale 更简单：两端装好后 `bind` 填 tailscale 网卡地址（如 `100.x.y.z`），
   `hosts: ["100.x.y.z"]`，扩展直接 `ws://100.x.y.z:43187`，流量在 WireGuard 里。
 
+## 同一台机器上同时跑 web 端和桌面版
+
+两端共用同一个宿主实现（`dsh-base` 的 `tools`/`typert` + UI 的 `inputTriggers`/`remote`），
+所以插件在两端的代码路径完全一致；真正的冲突只有一个——**默认端口 43187 只能被一个实例占用**。
+
+- 用的是默认端口（配置里没写 `port`）时：第二个实例发现端口被占会**自动改用随机端口**，
+  并在日志里说明，生成的扩展也随之写上新端口，所以 web 端和桌面版可以同时开着各连各的浏览器。
+- 显式写了 `port` 时：端口被占就**直接报错**，不会悄悄漂移。
+- 两个实例共用同一个 `<DSH_HOME>/browser-tabs`：配对令牌相同（好事），`extensions/` 里各端点的
+  目录按端口区分，互不覆盖；但 `build.json` 指纹会被对方改写，导致下次启动重建一次，仅此而已。
+  想彻底隔离就分别给两个 profile 设 `home`。
+
+### 桌面版上要做什么
+
+1. 把插件装进桌面版的 profile（和 web 端一样：`package.json` 加 `"dsh-doyourweb": "link:<绝对路径>"`，
+   再把它加进 `dsh.profile.bundles`，然后 `pnpm install`）；
+2. 跑一次自检：`npm run verify:host -- --tls`（15 项：依赖可解析、桥可监听、扩展可生成、
+   管理页鉴权、自签证书真握手）；
+3. 打开 DSH，输入 `@` 应能看到「浏览器」来源，`/browser` 应有连接页入口。
+
+桌面版若在 macOS/Linux：浏览器控制、扩展生成、TLS 全部可用；`app_*`（应用/桌面窗口枚举）是
+Windows 专属能力，会返回明确错误而不是崩溃。
+
 ## 插件自己出证书（主机零安装）
 
 不想装 Caddy、不想经 Cloudflare 时，让桥自己终结 TLS：

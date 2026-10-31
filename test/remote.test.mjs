@@ -39,7 +39,32 @@ test("host headers are matched against loopback plus the configured names only",
   }
 });
 
-test("management, setup and pairing answer only connections from this machine", async () => {
+test("a tunnel may terminate TLS on another port and still be recognised", async () => {
+  const root = await mkdtemp(path.join(os.tmpdir(), "dsh-public-port-"));
+  const bridge = new BrowserBridge({ home: path.join(root, "bridge"), port: 43187, bind: "172.16.0.59", remote: true,
+    hosts: ["browser.example.com", "alt.example.com:8443"], extensionScheme: "wss", extensionPort: 8443,
+    publicUrl: "https://browser.example.com:8443/" });
+  try {
+    // The listener port, the public port and a bare Host (443) are all acceptable.
+    assert.equal(bridge.hostAllowed("browser.example.com"), true);
+    assert.equal(bridge.hostAllowed("browser.example.com:43187"), true);
+    assert.equal(bridge.hostAllowed("browser.example.com:8443"), true);
+    assert.equal(bridge.hostAllowed("ALT.example.com:8443"), true);
+    assert.equal(bridge.hostAllowed("browser.example.com:9999"), false, "an unlisted port is another service");
+    assert.equal(bridge.hostAllowed("other.example.com:8443"), false);
+    // Secret URLs are built for the public origin, which is what a remote operator's
+    // browser can actually reach; the trailing slash must not double up.
+    assert.equal(bridge.publicOrigin(), "https://browser.example.com:8443");
+    assert.match(bridge.manageUrl(), /^https:\/\/browser\.example\.com:8443\/manage\?k=[0-9a-f]{64}$/);
+    assert.match(bridge.setupUrl(), /^https:\/\/browser\.example\.com:8443\/setup\?k=/);
+    assert.equal(bridge.endpointDescription(), "ws://browser.example.com:43187/extension");
+  } finally {
+    await bridge.close();
+    await rm(root, { recursive: true, force: true });
+  }
+});
+
+test("the management surface answers any peer that carries the secret, and no one else", async () => {
   const root = await mkdtemp(path.join(os.tmpdir(), "dsh-remote-gate-"));
   const bridge = new BrowserBridge({ home: path.join(root, "bridge"), port: 43187, bind: "0.0.0.0", remote: true, hosts: ["10.0.0.9"] });
   try {
@@ -52,8 +77,11 @@ test("management, setup and pairing answer only connections from this machine", 
     assert.equal(BrowserBridge.loopback({ socket: { remoteAddress: "127.0.0.1" } }), true);
     assert.equal(BrowserBridge.loopback({ socket: { remoteAddress: "::ffff:127.0.0.1" } }), true);
     assert.equal(BrowserBridge.loopback({ socket: { remoteAddress: "10.0.0.9" } }), false);
-    assert.equal(await respond(`/manage${secret}`, "10.0.0.9"), 404, "a published bridge must not expose management");
-    assert.equal(await respond(`/setup${secret}`, "10.0.0.9"), 404);
+    // The per-start secret is the credential, so a remote operator's browser may use
+    // it; without it nothing is served, from any peer.
+    assert.equal(await respond("/manage", "10.0.0.9"), 404, "a published bridge serves no page without the secret");
+    assert.equal(await respond(`/manage${secret}`, "10.0.0.9"), 200, "the secret is what authorises, not the peer address");
+    assert.equal(await respond(`/setup${secret}`, "10.0.0.9"), 200);
     assert.equal(await respond("/manage", "127.0.0.1"), 404, "loopback without the per-start secret is refused");
     assert.equal(await respond(`/manage${secret}`, "127.0.0.1"), 200);
     assert.equal(await respond(`/setup${secret}`, "127.0.0.1"), 200);
@@ -170,3 +198,4 @@ test("the management page is gated by the per-start secret, then by its cookie",
     await rm(root, { recursive: true, force: true });
   }
 });
+

@@ -58,7 +58,8 @@ export async function apply(ctx, config = {}) {
   const bridge = new BrowserBridge({ home, port: config.port || 43187, idleTimeoutMs: config.idleTimeoutMs || 120000,
     bind: config.bind || "127.0.0.1", hosts: config.hosts || [], remote: config.remote === true,
     extensionScheme: config.extensionScheme || "ws", extensionPort: config.extensionPort,
-    extensionProfiles: config.profiles || [], autoBuild: config.autoBuild !== false });
+    extensionProfiles: config.profiles || [], autoBuild: config.autoBuild !== false,
+    publicUrl: config.publicUrl });
   await ctx.effect(async () => {
     try { await bridge.start(); }
     catch (error) { await bridge.close(); throw error; }

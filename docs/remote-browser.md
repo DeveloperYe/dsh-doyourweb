@@ -88,6 +88,30 @@ cloudflared tunnel --url http://127.0.0.1:43187
 - Tailscale 更简单：两端装好后 `bind` 填 tailscale 网卡地址（如 `100.x.y.z`），
   `hosts: ["100.x.y.z"]`，扩展直接 `ws://100.x.y.z:43187`，流量在 WireGuard 里。
 
+## 隧道 / 反向代理（推荐给"浏览器在任意地方、不装任何软件"）
+
+公网 NAT + Cloudflare 橙色云域名是最省事的一条：CF 终结 TLS，再以普通 HTTP 打回本机的桥。
+
+```yaml
+- id: browser-tabs
+  config:
+    port: 43187
+    bind: 0.0.0.0          # NAT 要打到内网地址，所以不能再只绑环回
+    remote: true
+    hosts: ["browser.example.com"]
+    extensionScheme: wss    # 生成 wss://browser.example.com:443/extension 那一份
+    extensionPort: 443
+    publicUrl: "https://browser.example.com"   # 管理页/连接页的真实地址
+```
+
+要点：
+
+- `hosts` 必须写浏览器实际用的域名；桥按 Host 头白名单放行，并且同时接受监听端口与
+  `extensionPort`（隧道终结在 443/8443，Host 里的端口与监听端口不同）。
+- `publicUrl` 决定 DSH 打开管理页/连接页时用的地址——远程运维时它不能是 127.0.0.1。
+- 管理面不再限定环回：真正的凭据是每次启动的密钥，没有密钥的请求（含从公网来的）一律 404。
+- 浏览器侧零安装：装 CF 签证过的那份扩展即可，不需要 SSH、不需要在终端跑任何东西。
+
 ## 管理页怎么打开
 
 管理页与连接页现在**只能从 DSH 内部打开**：在对话里输入 `/apps`（应用管理）或 `/browser`（连接页面），

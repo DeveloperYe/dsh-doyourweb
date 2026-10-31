@@ -34,7 +34,7 @@ function deniedPage() {
 
 export class BrowserBridge extends EventEmitter {
   constructor({ home, port = 43187, extensionSource, idleTimeoutMs = 120000, bind = "127.0.0.1", hosts = [], remote = false,
-    extensionScheme = "ws", extensionPort, extensionProfiles: profiles = [], autoBuild = true } = {}) {
+    extensionScheme = "ws", extensionPort, extensionProfiles: profiles = [], autoBuild = true, publicUrl } = {}) {
     super();
     this.home = home;
     this.port = port;
@@ -44,6 +44,8 @@ export class BrowserBridge extends EventEmitter {
     this.extensionScheme = extensionScheme === "wss" ? "wss" : "ws";
     this.extensionPort = extensionPort;
     this.extensionProfilesConfig = Array.isArray(profiles) ? profiles : [];
+    this.publicUrl = publicUrl ? String(publicUrl) : undefined;
+    this.managementFailures = new Map();
     this.autoBuild = autoBuild !== false;
     this.extensionOutDir = path.join(home || ".", "extensions");
     this.extensionBuilds = [];
@@ -76,16 +78,29 @@ export class BrowserBridge extends EventEmitter {
     if (typeof header !== "string" || !header) return false;
     const match = /^(\[[^\]]+\]|[^:]+)(?::(\d+))?$/.exec(header.trim());
     if (!match) return false;
-    if (match[2] !== undefined && Number(match[2]) !== this.port) return false;
+    // A tunnel terminates TLS on its own port (443, or 8443) and forwards the Host it
+    // received, so the listen port is not the only acceptable one.
+    const ports = new Set([String(this.port)]);
+    if (this.extensionPort) ports.add(String(this.extensionPort));
+    if (match[2] !== undefined && !ports.has(match[2])) return false;
     const allowed = new Set(["127.0.0.1", "localhost", "::1", "[::1]"]);
     if (!this.localBind()) allowed.add(this.bind.toLowerCase());
-    for (const entry of this.hosts) allowed.add(entry);
+    for (const entry of this.hosts) {
+      const bare = /^(\[[^\]]+\]|[^:]+)/.exec(entry)?.[1];
+      if (bare) allowed.add(bare.toLowerCase());
+    }
     return allowed.has(match[1].toLowerCase());
+  }
+
+  /** The origin a human's browser should use for this bridge. */
+  publicOrigin() {
+    if (this.publicUrl) return String(this.publicUrl).replace(/\/+$/, "");
+    return `http://127.0.0.1:${this.port}`;
   }
 
   /** A management URL carrying the per-start secret DSH hands to the browser. */
   secretUrl(pathname) {
-    return `http://127.0.0.1:${this.port}${pathname}?k=${this.manageSecret}`;
+    return `${this.publicOrigin()}${pathname}?k=${this.manageSecret}`;
   }
 
   manageUrl() { return this.secretUrl("/manage"); }
@@ -285,19 +300,21 @@ export class BrowserBridge extends EventEmitter {
     catch { response.writeHead(400, { "Content-Type": "text/plain; charset=utf-8" }).end("Bad request"); return; }
     if (!this.hostAllowed(request.headers.host)) { response.writeHead(403).end(); return; }
     const pathname = url.pathname;
-    // Management, pairing and setup stay local to this machine even when the
-    // bridge is published for a remote browser: a published port must never hand
-    // out the management surface.
-    if (!BrowserBridge.loopback(request)) { response.writeHead(404).end(); return; }
-    // Everything except the extension handshake needs the per-start secret that
-    // only DSH can hand out; loopback alone is not an identity.
+    // Everything except the extension handshake needs the per-start secret that only
+    // DSH can hand out; loopback alone is not an identity. A remote operator's
+    // browser may present it too, which is why this is not loopback-only any more.
     if (!this.authorized(request, url)) {
+      const peer = request.socket?.remoteAddress || "unknown";
+      const failures = (this.managementFailures.get(peer) || 0) + 1;
+      this.managementFailures.set(peer, failures);
+      if (this.managementFailures.size > 200) this.managementFailures.delete(this.managementFailures.keys().next().value);
       if (pathname === "/manage" || pathname === "/setup" || pathname === "/extension.zip") {
         response.writeHead(404, { "Content-Type": "text/html; charset=utf-8", "Cache-Control": "no-store" }).end(deniedPage());
         return;
       }
       response.writeHead(404).end(); return;
     }
+    this.managementFailures.delete(request.socket?.remoteAddress || "unknown");
     if (pathname === "/manage/api" && request.method === "POST") return this.handleManagement(request, response);
     if (request.method === "POST" && pathname === "/setup/pair") return this.handlePairPost(request, response);
     if (request.method !== "GET") { response.writeHead(405).end(); return; }
@@ -338,10 +355,10 @@ export class BrowserBridge extends EventEmitter {
   }
 
   handleManagement(request, response) {
-    const origin = `http://127.0.0.1:${this.port}`;
+    const origins = new Set([`http://127.0.0.1:${this.port}`, this.publicOrigin()]);
     const cookie = /(?:^|;\s*)dsh_manage=([0-9a-f]{32,})/.exec(request.headers.cookie || "")?.[1];
     if (!sameSecret(request.headers["x-dsh-key"] ?? cookie, this.manageSecret)
-      || (request.headers.origin && request.headers.origin !== origin)
+      || (request.headers.origin && !origins.has(request.headers.origin))
       || (request.headers["sec-fetch-site"] && request.headers["sec-fetch-site"] !== "same-origin")
       || request.headers["content-type"]?.split(";")[0] !== "application/json") { response.writeHead(403).end(); return; }
     let body = "", oversized = false;

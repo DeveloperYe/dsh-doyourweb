@@ -1,5 +1,13 @@
 # 更新记录
 
+## 0.2.2 · 2026-10-31（DeveloperYe fork）
+
+- 支持"隧道终结 TLS、桥绑内网"的部署：新增 `publicUrl`，管理页/连接页的 URL 按公网地址生成（远程运维不再指向 127.0.0.1）。
+- `hosts` 白名单同时接受监听端口与 `extensionPort`，隧道以 Host=browser.example.com（无端口或 443/8443）回源也能通过。
+- 管理面从"仅环回"放宽为"必须携带每次启动的密钥"：远程运维的人能用，没有密钥的请求（包括公网来的）仍然 404；同一对端的失败按 IP 记数（上限 200 条）。
+- 新增 `test/remote.test.mjs` 用例覆盖公网端口/公网 Origin；本地 TLS 终结器 + 真 Chromium 验证了
+  "扩展 → wss → 回环桥" 全链路（`work/poc-doyourweb/poc5-wss.mjs`）。
+
 ## 0.2.1 · 2026-10-31（DeveloperYe fork）
 
 - 修：管理页把管理密钥写进 `Set-Cookie` 响应头，任何本机进程都能读回来（0.1.7 只把密钥从 HTML 正文挪到响应头，等于没修）。现在管理页/连接页/扩展 zip 都由一个**只交给 DSH、不进任何 HTTP 响应**的每次启动密钥门禁（`?k=` + HttpOnly cookie），裸访问得到说明页。

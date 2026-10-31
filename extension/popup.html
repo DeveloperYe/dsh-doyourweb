@@ -4,23 +4,24 @@
 <h1>DSH DoYourWeb</h1>
 <label>&#36830;&#25509; DSH <input id="enabled" type="checkbox"></label>
 <output id="status"></output>
+<p class="hint" id="endpoint"></p>
 <div class="row"><button id="annotate">批注当前页面</button><button id="manage">应用管理</button><button id="check-link">检查连接</button></div>
 <div id="pairing" hidden>
   <div class="hint">&#25226;&#19979;&#38754;&#36825; 4 &#20301;&#25968;&#23383;&#36755;&#20837; DSH &#30340;&#36830;&#25509;&#39029;&#38754;&#65292;&#21363;&#21487;&#23436;&#25104;&#37197;&#23545;&#12290;</div>
   <code id="code"></code>
 </div>
 <button id="setup">打开连接页面</button>
-<details><summary>连接设置</summary><div class="row"><label for="scheme" class="hint">协议</label><select id="scheme"><option value="ws">ws</option><option value="wss">wss</option></select></div>
+<details open><summary><b>连接设置</b>（协议 / 主机 / 端口 / 令牌）</summary><div class="row"><label for="scheme" class="hint">协议</label><select id="scheme"><option value="ws">ws</option><option value="wss">wss</option></select></div>
 <div class="row"><label for="host" class="hint">DSH 主机</label><input id="host" type="text" autocomplete="off" spellcheck="false"></div>
-<div class="row"><label for="port" class="hint">DSH 端口</label><input id="port" type="number" min="1" max="65535"><button id="save-port">保存</button></div>
+<div class="row"><label for="port" class="hint">DSH 端口</label><input id="port" type="number" min="1" max="65535"><button id="save-port">保存并重连</button></div>
 <div class="row"><label for="token" class="hint">配对令牌</label><input id="token" type="password" autocomplete="off" spellcheck="false" placeholder="远程连接时粘贴"></div>
-<div class="row"><button id="save-token">应用令牌</button><button id="unpair" hidden>解除配对</button></div>
-<p class="hint" id="endpoint"></p></details>
-<div id="ca" hidden>
+<div class="row"><button id="save-token">应用令牌并重连</button><button id="unpair" hidden>解除配对</button></div>
+</details>
+<details id="ca" hidden><summary>CA 证书（首次使用 wss 时安装一次）</summary>
   <div class="row"><button id="install-ca">安装 CA 证书（下载）</button></div>
   <p class="hint" id="link-hint">显示离线时先点「检查连接」：弹出的是<b>证书警告</b> → CA 没装好或浏览器没重启；弹出「只能从 DSH 内部打开」的说明页 → 证书正常，问题在令牌或地址。</p>
   <p class="hint" id="ca-hint">这份扩展连的是自签名 HTTPS（wss）。首次使用请先信任它自带的 CA：点上面的按钮下载 → <b>双击文件</b> → 「安装证书」→ 选择<b>本地计算机</b> → 放入「<b>受信任的根证书颁发机构</b>」→ 确认。只需一次，之后自动连接。</p>
-</div>
+</details>
 <p class="hint" id="file-access"></p>
 <style>body{width:320px;padding:20px;background:#f5f8f5;color:#263f33}h1{font-size:17px;letter-spacing:-.3px}output{background:#e6f0e9;border:1px solid #cde0d2;border-radius:10px;padding:10px 12px;margin:14px 0;color:#346448}button{cursor:pointer;border:1px solid #d2dfd5;border-radius:8px;background:#fff;padding:8px 12px;color:#315e44;font:inherit;font-size:12px}button:hover{background:#e8f1eb}button:focus-visible,input:focus-visible,summary:focus-visible{outline:2px solid #54896a;outline-offset:2px}#annotate{background:#236b4c;border-color:#236b4c;color:white;flex:1}#setup{width:100%;margin-top:10px}#pairing{border-color:#bdd5c4;background:white;padding:14px;border-radius:10px}#code{margin-top:10px;font-size:28px;color:#236b4c}.row{gap:8px}details{border-top:1px solid #dae4dd;margin-top:18px;padding-top:12px}summary{font-size:12px;color:#65796b;cursor:pointer}input[type=number]{border:1px solid #ccd9d0;border-radius:6px;padding:5px;width:80px}.hint{color:#718476}#file-access{margin-bottom:0}</style>
 <script type="module" src="popup.js"></script></html>

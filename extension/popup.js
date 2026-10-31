@@ -30,6 +30,7 @@ document.querySelector("#setup").addEventListener("click", async () => {
 if (config.ca) {
   const panel = document.querySelector("#ca");
   panel.hidden = false;
+  panel.open = false;
   document.querySelector("#install-ca").addEventListener("click", () => {
     const link = document.createElement("a");
     link.href = chrome.runtime.getURL(config.ca);

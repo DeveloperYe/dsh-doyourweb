@@ -42,3 +42,6 @@ jobs:
       - run: npx playwright-core install --with-deps chromium
       - run: npm run build
       - run: npm run test:browser
+      # Loads the extension the bridge generated from its own settings into the same
+      # Chromium and asserts it connects without any pairing step.
+      - run: npm run test:generated

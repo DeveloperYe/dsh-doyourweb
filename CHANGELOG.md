@@ -1,5 +1,13 @@
 # 更新记录
 
+## 0.3.0 · 2026-10-31（DeveloperYe fork）
+
+- **插件自己终结 TLS**：`tls: true` + `tlsPort` + `tlsIps`，插件进程内起 https 监听，主机上不需要 Caddy / cloudflared / 证书工具。首次启动自建 10 年 CA + 397 天叶子证书，到期 30 天前或 SAN 变化时自动用同一 CA 重签。
+- 新增 `/ca.crt`（受每次启动的密钥保护，公网拿不到）：被控电脑一次性把 CA 装进「受信任的根证书颁发机构」，之后 `wss://` 扩展直连。
+- 证书由纯 JS 的 `node-forge@1.4.2` 生成（随插件 node_modules 分发）。踩过的坑：PowerShell `New-SelfSignedCertificate` 签出的链 OpenSSL 不认；forge 的 `authorityKeyIdentifier` 会让 OpenSSL 认为签发者不认识而拒绝链接——所以叶子证书刻意不带 AKID，靠 issuer DN + 签名建链（Chrome/Edge/Windows 均可）。
+- `/manage` 的「浏览器扩展」页新增证书区块：wss 端口、到期时间、覆盖的名称与地址、CA 下载。
+- 测试：新增 `test/tls.test.mjs`（SAN 生成、CA/叶子签发与重签、真实 TLS 握手校验、wss 桥接端到端、CA 下载鉴权）。
+
 ## 0.2.2 · 2026-10-31（DeveloperYe fork）
 
 - 支持"隧道终结 TLS、桥绑内网"的部署：新增 `publicUrl`，管理页/连接页的 URL 按公网地址生成（远程运维不再指向 127.0.0.1）。

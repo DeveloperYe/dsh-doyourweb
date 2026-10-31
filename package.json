@@ -1,6 +1,6 @@
 {
   "name": "dsh-doyourweb",
-  "version": "0.2.2",
+  "version": "0.3.0",
   "description": "Browser tabs, element annotations and MCP/CLI-first desktop app control for DeepSeek Harness",
   "type": "module",
   "license": "MIT",
@@ -75,6 +75,7 @@
     "@modelcontextprotocol/sdk": "1.32.1",
     "ajv": "8.20.0",
     "cross-spawn": "7.0.6",
+    "node-forge": "1.4.2",
     "playwright-core": "1.64.0",
     "ws": "8.22.0",
     "zod": "4.1.12"

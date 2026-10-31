@@ -27,6 +27,11 @@ row.append(node('p','目录：'+build.dir));
 const link=node('a','下载 zip（'+Math.round((build.bytes||0)/1024)+' KB）');link.href=build.download;link.rel='noreferrer';row.append(link);
 row.append(button('复制目录',async()=>{await navigator.clipboard.writeText(build.dir)}));area.append(row)}
 if(!(data.builds||[]).length)area.append(node('p','暂无生成的扩展'));
+if(data.tls){const box=node('article');box.append(node('h3','本机自签证书（插件内 TLS）'),node('p','wss 端口 '+data.tls.port+' · 到期 '+new Date(data.tls.notAfter).toLocaleDateString()));
+box.append(node('p','覆盖名称：'+(data.tls.names||[]).join(', ')+' · 地址：'+(data.tls.ips||[]).join(', ')));
+const caLink=node('a','下载 CA 证书（.crt）');caLink.href=data.tls.ca;caLink.rel='noreferrer';box.append(caLink);
+box.append(node('p','在被控电脑上双击这个 .crt，选「安装证书 → 本地计算机 → 受信任的根证书颁发机构」，之后 wss 扩展即可直连。只需做一次。'));
+area.append(box)}
 area.append(node('p','版本 '+data.version+' · 输出目录 '+data.outDir));
 area.append(button('重新生成全部',async()=>{await api('rebuild');await extensions()}));}
 function show(tab){current=tab;for(const section of document.querySelectorAll('main>section'))section.hidden=section.id!==tab+'-section';for(const b of document.querySelectorAll('nav button'))b.setAttribute('aria-selected',String(b.dataset.tab===tab));if(tab==='extensions')extensions().catch(e=>$('#status').textContent=e.message);if(tab==='apps')apps().catch(e=>$('#status').textContent=e.message)}

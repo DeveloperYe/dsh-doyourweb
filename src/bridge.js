@@ -1,4 +1,5 @@
 import http from "node:http";
+import https from "node:https";
 import { EventEmitter } from "node:events";
 import { randomUUID, randomBytes, timingSafeEqual } from "node:crypto";
 import { readFile, writeFile, mkdir } from "node:fs/promises";
@@ -9,6 +10,7 @@ import { chromium } from "playwright-core";
 import { BrowserModel } from "./vendor/browser-model.js";
 import { extensionId, Pairings, pinnedExtensionId } from "./pairing.js";
 import { buildExtension, configFingerprint, extensionProfiles, generateManifestKey, zipDirectory } from "./extension-build.js";
+import { ensureLocalCertificate } from "./tls.js";
 import { canControl, parseRef, tabRef } from "./protocol.js";
 import { managementPage } from "./manage.js";
 
@@ -34,7 +36,8 @@ function deniedPage() {
 
 export class BrowserBridge extends EventEmitter {
   constructor({ home, port = 43187, extensionSource, idleTimeoutMs = 120000, bind = "127.0.0.1", hosts = [], remote = false,
-    extensionScheme = "ws", extensionPort, extensionProfiles: profiles = [], autoBuild = true, publicUrl } = {}) {
+    extensionScheme = "ws", extensionPort, extensionProfiles: profiles = [], autoBuild = true, publicUrl,
+    tls = false, tlsPort = 8443, tlsIps = [] } = {}) {
     super();
     this.home = home;
     this.port = port;
@@ -45,6 +48,10 @@ export class BrowserBridge extends EventEmitter {
     this.extensionPort = extensionPort;
     this.extensionProfilesConfig = Array.isArray(profiles) ? profiles : [];
     this.publicUrl = publicUrl ? String(publicUrl) : undefined;
+    this.tlsEnabled = tls === true;
+    this.tlsPort = Number(tlsPort) || 8443;
+    this.tlsIps = (Array.isArray(tlsIps) ? tlsIps : []).map(value => String(value).trim()).filter(Boolean);
+    this.tlsActive = false;
     this.managementFailures = new Map();
     this.autoBuild = autoBuild !== false;
     this.extensionOutDir = path.join(home || ".", "extensions");
@@ -82,6 +89,7 @@ export class BrowserBridge extends EventEmitter {
     // received, so the listen port is not the only acceptable one.
     const ports = new Set([String(this.port)]);
     if (this.extensionPort) ports.add(String(this.extensionPort));
+    if (this.tlsActive) ports.add(String(this.tlsPort));
     if (match[2] !== undefined && !ports.has(match[2])) return false;
     const allowed = new Set(["127.0.0.1", "localhost", "::1", "[::1]"]);
     if (!this.localBind()) allowed.add(this.bind.toLowerCase());
@@ -169,8 +177,12 @@ export class BrowserBridge extends EventEmitter {
 
   /** Endpoints this install can hand out as ready-made extensions. */
   extensionProfiles() {
-    return extensionProfiles({ bind: this.bind, port: this.port, hosts: this.hosts,
-      scheme: this.extensionScheme, publicPort: this.extensionPort, profiles: this.extensionProfilesConfig });
+    // When the bridge terminates TLS itself every published endpoint is wss on the
+    // TLS port; otherwise the operator's own terminator decides scheme and port.
+    const scheme = this.tlsActive ? "wss" : this.extensionScheme;
+    const publicPort = this.tlsActive ? this.tlsPort : this.extensionPort;
+    const hosts = this.tlsActive ? [...this.hosts, ...this.tlsIps] : this.hosts;
+    return extensionProfiles({ bind: this.bind, port: this.port, hosts, scheme, publicPort, profiles: this.extensionProfilesConfig });
   }
 
   /**
@@ -209,6 +221,31 @@ export class BrowserBridge extends EventEmitter {
    * decision: a non-loopback bind without `remote: true` is refused so a typo in
    * the settings cannot publish browser control to the network.
    */
+  /**
+   * Serve the same routes over TLS from inside this process: no reverse proxy, no
+   * certificate tooling, nothing to install on this machine. The plain listener on
+   * 127.0.0.1 stays for the CDP relay and local use.
+   */
+  async startTls() {
+    const hostnames = [...this.hosts];
+    if (this.publicUrl) {
+      try { hostnames.push(new URL(this.publicUrl).hostname); } catch { /* publicUrl may be a bare host */ }
+    }
+    if (!["127.0.0.1", "0.0.0.0", "::"].includes(this.bind)) hostnames.push(this.bind);
+    const material = await ensureLocalCertificate({ dir: path.join(this.home, "tls"), hostnames, ips: this.tlsIps });
+    this.ca = material;
+    this.tlsServer = https.createServer({ cert: material.certPem, key: material.keyPem }, (request, response) => {
+      void this.handleHttp(request, response);
+    });
+    this.tlsServer.on("upgrade", (request, socket, head) => this.handleUpgrade(request, socket, head));
+    await new Promise((resolve, reject) => {
+      this.tlsServer.once("error", reject);
+      this.tlsServer.listen(this.tlsPort, this.bind, resolve);
+    });
+    this.tlsPort = this.tlsServer.address().port;
+    this.tlsActive = true;
+  }
+
   /**
    * One WebSocket upgrade. Host allowlist first, then the extension origin, then
    * either the paired token or — for a socket on this machine only — a pairing
@@ -257,6 +294,7 @@ export class BrowserBridge extends EventEmitter {
     });
     this.port = this.server.address().port;
     this.url = `http://127.0.0.1:${this.port}/setup`;
+    if (this.tlsEnabled) await this.startTls();
     // Ready-to-load copies for every configured endpoint. Failure here must not
     // stop the bridge: the stock folder plus PIN pairing still work without them.
     if (this.autoBuild) {
@@ -327,6 +365,15 @@ export class BrowserBridge extends EventEmitter {
         "Set-Cookie": `dsh_manage=${this.manageSecret}; HttpOnly; SameSite=Strict; Path=/`,
         "Content-Security-Policy": `default-src 'none'; connect-src 'self'; style-src 'unsafe-inline'; script-src 'nonce-${nonce}'; base-uri 'none'; frame-ancestors 'none'` });
       response.end(html); return;
+    }
+    if (pathname === "/ca.crt" && this.tlsActive) {
+      // The trust anchor for the self-signed leaf. It is public by nature, but keep
+      // it behind the same gate so only the operator can fetch it conveniently.
+      response.writeHead(200, { "Content-Type": "application/x-x509-ca-cert", "Content-Cache": "no-store",
+        "Content-Disposition": 'attachment; filename="dsh-doyourweb-ca.crt"',
+        "Content-Length": this.ca.caDer.length });
+      response.end(this.ca.caDer);
+      return;
     }
     if (pathname === "/extension.zip") {
       // Hand the generated, already-paired extension to the user's browser. Local
@@ -650,6 +697,7 @@ export class BrowserBridge extends EventEmitter {
     for (const pending of this.pending.values()) { clearTimeout(pending.timer); pending.reject(new Error("Bridge stopped")); }
     this.pending.clear();
     this.ws?.close();
+    if (this.tlsServer?.listening) await new Promise(resolve => { this.tlsServer.close(resolve); this.tlsServer.closeAllConnections(); });
     if (this.server?.listening) await new Promise(resolve => {
       this.server.close(resolve);
       // Management-page fetch connections must not keep plugin unload waiting.

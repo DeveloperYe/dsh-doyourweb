@@ -22,8 +22,11 @@ function ipToSAN(value) {
 
 /** SAN entries for the given names and addresses, loopback always included. */
 export function sanEntries(hostnames = [], ips = []) {
-  const names = new Set(["localhost"]);
+  // Configured names come first so the certificate's subject reads like the address
+  // people actually use; localhost is added last and only as a convenience entry.
+  const names = new Set();
   for (const value of hostnames) if (value && !ipToSAN(String(value))) names.add(String(value).toLowerCase());
+  names.add("localhost"); // last, so the configured address owns the subject name
   const addresses = new Set(["127.0.0.1"]);
   for (const value of ips) if (ipToSAN(String(value))) addresses.add(String(value));
   for (const value of [...hostnames, ...ips]) { const parsed = ipToSAN(String(value ?? "")); if (parsed) addresses.add(parsed.ip); }
@@ -56,7 +59,8 @@ function createLeaf({ ca, caKey, names, ips }) {
   certificate.serialNumber = `02${forge.util.bytesToHex(forge.random.getBytesSync(8))}`;
   certificate.validity.notBefore = new Date(Date.now() - 60 * 60 * 1000);
   certificate.validity.notAfter = new Date(Date.now() + LEAF_DAYS * 24 * 60 * 60 * 1000);
-  certificate.setSubject([{ name: "commonName", value: names[0] }]);
+  const subject = names[0] || ips[0] || "localhost";
+  certificate.setSubject([{ name: "commonName", value: subject }]);
   certificate.setIssuer(ca.subject.attributes);
   // No authorityKeyIdentifier on purpose: forge's encoder produces an extension that
   // OpenSSL reads as a foreign issuer and refuses to link (verified by bisecting the

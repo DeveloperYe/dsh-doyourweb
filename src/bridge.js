@@ -1,5 +1,6 @@
 import http from "node:http";
 import https from "node:https";
+import { X509Certificate } from "node:crypto";
 import { EventEmitter } from "node:events";
 import { randomUUID, randomBytes, timingSafeEqual } from "node:crypto";
 import { readFile, writeFile, mkdir } from "node:fs/promises";
@@ -480,6 +481,7 @@ export class BrowserBridge extends EventEmitter {
       <p class="hint">&#19979;&#36733;&#21518;&#22312; <code>edge://extensions</code> / <code>chrome://extensions</code> &#25171;&#24320;&#24320;&#21457;&#32773;&#27169;&#24335;&#65307;zip &#38656;&#35201;&#20808;&#35299;&#21387;&#12290;&#30446;&#24405;&#37324;&#24102;&#30528;&#37197;&#23545;&#20196;&#29260;&#65292;&#31561;&#21516;&#20110;&#23494;&#30721;&#65292;&#19981;&#35201;&#22806;&#20256;&#12290;</p></div></div>`;
     const body = `<main><header><div class="mark">↗</div><div><p class="eyebrow">DSH / BROWSER</p><h1>连接你的浏览器</h1></div><span class="badge ${connected ? "online" : ""}">${connected ? "已连接" : pending.length ? "待确认" : "等待连接"}</span></header>
       <p class="intro">让聊天接着你的网页工作。保留登录状态，在对话中用 @ 选择页面。</p>
+      ${this.tlsActive ? this.certificateNotice() : ""}
       ${connected ? `<section class="success"><h2>连接已就绪</h2><p>回到 DSH，在输入框键入 <kbd>@</kbd>，选择需要使用的标签页。</p><p class="hint">已连接 ${this.profiles.size} 个浏览器配置。需要标注页面时，打开扩展并点击「批注当前页面」。</p></section><details><summary>连接另一个浏览器</summary>${install}</details>` : `<section class="card">${pending.length ? `<details><summary>扩展已发来请求 · 查看安装步骤</summary>${install}</details>` : install}</section>`}
       ${!connected || requests ? `<section class="card step"><span class="number">2</span><div><h2>输入验证码，确认连接</h2><p>扩展图标上的 4 位数字就是配对码，输入后点击允许。</p>${requests || `<div class="waiting"><span class="dot"></span>等待扩展发来请求…</div><p class="hint">加载扩展后配对请求会自动出现。</p>`}</div></section>` : ""}
       <details class="help"><summary>连接帮助、本地 HTML 与远程浏览器</summary><p>浏览器限制网页直接打开扩展管理页，请复制地址后粘贴到地址栏。</p><p>如果扩展显示 OFF，请打开扩展弹窗，检查连接开关，并在「连接设置」将端口设为 <code>${this.port}</code>。</p><p>本地 HTML：在扩展详情中开启「允许访问文件网址」，再用 @ 选择已打开的文件标签页。</p><p>远程浏览器：在「应用管理」页复制配对令牌，填到另一台电脑扩展的「连接设置」里（协议 ws 或 wss、主机、端口一致）。远程浏览器只能使用令牌连接，不能在本页配对。</p><p>扩展只连接 DSH 指定的地址，不读取 Cookie；只有在对话中引用的页面才允许操作。</p></details>

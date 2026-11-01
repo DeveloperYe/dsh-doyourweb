@@ -406,7 +406,7 @@ export class BrowserBridge extends EventEmitter {
       // The trust anchor for the self-signed leaf. It is public by nature, but keep
       // it behind the same gate so only the operator can fetch it conveniently.
       response.writeHead(200, { "Content-Type": "application/x-x509-ca-cert", "Content-Cache": "no-store",
-        "Content-Disposition": 'attachment; filename="dsh-doyourweb-ca.crt"',
+        "Content-Disposition": 'attachment; filename="dsh-doyourweb-remote-ca.crt"',
         "Content-Length": this.ca.caDer.length });
       response.end(this.ca.caDer);
       return;
@@ -420,7 +420,7 @@ export class BrowserBridge extends EventEmitter {
       try {
         const bytes = await readFile(build.zip);
         response.writeHead(200, { "Content-Type": "application/zip", "Content-Length": bytes.length, "Cache-Control": "no-store",
-          "Content-Disposition": `attachment; filename="dsh-doyourweb-${key}.zip"` });
+          "Content-Disposition": `attachment; filename="dsh-doyourweb-remote-${key}.zip"` });
         response.end(bytes);
       } catch { response.writeHead(404).end(); }
       return;

@@ -51,7 +51,7 @@ test("Remote descriptors carry strict codecs the DSH client gateway mounts", () 
     && typeof codec.create().parse === "function";
   assert.equal(descriptors.length, 6);
   for (const descriptor of descriptors) {
-    assert.match(descriptor.id, /^dsh-doyourweb#browserTabs\/(list|setup|focus|apps|annotationSession|manage)$/);
+    assert.match(descriptor.id, /^dsh-doyourweb-remote#browserTabs\/(list|setup|focus|apps|annotationSession|manage)$/);
     assert.equal(descriptor.invocation.kind, "direct");
     assert.deepEqual(descriptor.cancellation, { parameter: "signal" });
     assert.ok(strict(descriptor.result), `${descriptor.method} result needs a strict codec`);
@@ -554,4 +554,5 @@ test("an offline browser or failed RPC exposes setup instead of an empty menu", 
     assert.deepEqual(await sources[0].candidates({}, { query: "", signal: AbortSignal.abort() }), []);
   } finally { globalThis.window = originalWindow; }
 });
+
 

@@ -60,7 +60,7 @@ export function apply(ctx) {
           }
           acknowledgements.get(sessionId).push({ id });
         }
-      } catch (error) { console.warn("dsh-doyourweb annotation draft", error); }
+      } catch (error) { console.warn("dsh-doyourweb-remote annotation draft", error); }
       finally { if (active) busy.delete(sessionId); }
     };
     scope.slots.inject("conversation.input.overlay", () => scope.slots.register({ name: "conversation.input.overlay", id: "doyourweb-annotation-session",

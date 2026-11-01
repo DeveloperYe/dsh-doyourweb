@@ -34,7 +34,7 @@ if (config.ca) {
   document.querySelector("#install-ca").addEventListener("click", () => {
     const link = document.createElement("a");
     link.href = chrome.runtime.getURL(config.ca);
-    link.download = "dsh-doyourweb-ca.crt";
+    link.download = "dsh-doyourweb-remote-ca.crt";
     document.body.append(link);
     link.click();
     link.remove();

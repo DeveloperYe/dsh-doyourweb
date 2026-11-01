@@ -1,4 +1,4 @@
-# dsh-doyourweb
+# dsh-doyourweb-remote
 
 本地 HTML：在 Chrome / Edge 扩展详情中开启“允许访问文件网址”，重新加载扩展后，已打开的 `file://` 页面会出现在 `@` 菜单，可读取、操作和批注。该开关由浏览器管理。
 
@@ -6,7 +6,7 @@
 
 `0.1.6` 改善桌面输入、快照句柄与连接界面，新增 `app_type` 打字和快捷键。支持页面元素批注和 `@` Windows 应用。批注先加入聊天草稿，可积累多条后按 Enter 发送；应用控制先查匹配的 MCP，已安装的本地 MCP 直接连接，缺少时询问安装；未发现 MCP 时使用 computer use。新提出的配置、远程端点和桌面驱动首次连接仍需确认，详见[批注与应用控制](docs/annotations-and-apps.md)。
 
-[![CI](https://img.shields.io/github/actions/workflow/status/SheepofSheep/dsh-doyourweb/ci.yml?branch=main&label=CI)](https://github.com/SheepofSheep/dsh-doyourweb/actions/workflows/ci.yml)
+[![CI](https://img.shields.io/github/actions/workflow/status/DeveloperYe/dsh-doyourweb/ci.yml?branch=main&label=CI)](https://github.com/SheepofSheep/dsh-doyourweb/actions/workflows/ci.yml)
 [![License](https://img.shields.io/badge/license-MIT-green)](LICENSE)
 [![Node.js](https://img.shields.io/badge/Node.js-%3E%3D22-339933)](package.json)
 [![Playwright](https://img.shields.io/badge/Playwright-1.64.0-2EAD33)](package.json)
@@ -25,7 +25,7 @@
 
 ## 01 · 项目介绍
 
-网页任务常常依赖已经打开的页面和已经登录的账号。dsh-doyourweb 面向希望直接在 DeepSeek Harness 中处理这些页面的用户，不需要另开自动化浏览器，也不需要导出 Cookie。
+网页任务常常依赖已经打开的页面和已经登录的账号。dsh-doyourweb-remote 面向希望直接在 DeepSeek Harness 中处理这些页面的用户，不需要另开自动化浏览器，也不需要导出 Cookie。
 
 项目由 DSH 插件和配套的 Manifest V3 浏览器扩展组成。插件接入原生 `@`、`/` 菜单，扩展提供标签页信息和控制通道。完成一次配对后，扩展会在后台重连，不必一直打开弹窗。
 
@@ -125,7 +125,7 @@ flowchart LR
 通过 npm 安装时，在 DSH 打开 **插件 > 添加插件**，安装源选择 **npm 官方源**，输入：
 
 ```text
-dsh-doyourweb
+dsh-doyourweb-remote
 ```
 
 这种方式需要包已经发布。若官方源返回 `404`，可用下面的本地安装方式。新版本在镜像源中的同步可能有延迟。
@@ -134,7 +134,7 @@ dsh-doyourweb
 
 ```sh
 git clone https://github.com/DeveloperYe/dsh-doyourweb.git
-cd dsh-doyourweb
+cd dsh-doyourweb-remote
 npm ci
 npm run build
 ```

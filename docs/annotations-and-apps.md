@@ -6,7 +6,7 @@
 
 ## 本地试用
 
-日常使用可在 DSH 的“插件 → 添加插件”中选择 npm 官方源，安装 `dsh-doyourweb`。需要本地开发时，按以下步骤操作：
+日常使用可在 DSH 的“插件 → 添加插件”中选择 npm 官方源，安装 `dsh-doyourweb-remote`。需要本地开发时，按以下步骤操作：
 
 1. 在项目中执行 `npm ci`、`npm run build`。
 2. 在 DSH 的“插件 → 添加插件”填入当前项目绝对路径。旧版插件与本地版不能同时使用同一端口。
@@ -164,7 +164,7 @@ MCP、CLI 或桌面操作超时后，可能已经发生修改。插件记录不�
 
 ## English
 
-Version `0.1.3` supports installation from npm as `dsh-doyourweb`, or from a locally built project directory. Fully exit DSH from the system tray, restart it, and reload the Chrome/Edge extension after an upgrade. Do not run two plugin copies on the same port. `/apps` opens the local manager; `/browser` remains the pairing entry.
+Version `0.1.3` supports installation from npm as `dsh-doyourweb-remote`, or from a locally built project directory. Fully exit DSH from the system tray, restart it, and reload the Chrome/Edge extension after an upgrade. Do not run two plugin copies on the same port. `/apps` opens the local manager; `/browser` remains the pairing entry.
 
 **Annotations:** open the target DSH conversation, then choose “批注当前页面” in the extension popup or “批注” on a controlled page. Pick an element, write a comment and press Enter or click “加入聊天草稿”. It appends to the target chat draft with an optional cropped image. Drag the toolbar and collect multiple annotations; press Enter in chat to send them together. Shift+Enter inserts a newline; no separate annotation files or `@` library are kept. DSH retains the normal message and attachment. Multiple distinct open DSH conversations require an explicit `browser_annotate` call from the destination conversation. Metadata includes URL, selector, selected computed styles, visible text and bounds, not input values. It is historical context, not a source-code mapping. Cross-origin frame selection and document-root Shadow DOM selectors are limited. Idle detach removes the toolbar and retains an unsent comment draft only in the original page. Image attachments require an image-capable model; delivery errors retain the comment.
 

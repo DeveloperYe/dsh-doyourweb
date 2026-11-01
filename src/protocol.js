@@ -1,7 +1,7 @@
 import { clip } from "./output.js";
 
 export const SCHEME = "dsh-browser://";
-export const PACKAGE = "dsh-doyourweb";
+export const PACKAGE = "dsh-doyourweb-remote";
 
 export function tabRef(profile, tabId) {
   if (!/^[a-z0-9-]{1,80}$/i.test(profile) || !Number.isSafeInteger(tabId) || tabId < 0) {

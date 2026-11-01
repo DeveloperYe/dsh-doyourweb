@@ -139,7 +139,7 @@ cloudflared tunnel --url http://127.0.0.1:43187
 
 ### 桌面版上要做什么
 
-1. 把插件装进桌面版的 profile（和 web 端一样：`package.json` 加 `"dsh-doyourweb": "link:<绝对路径>"`，
+1. 把插件装进桌面版的 profile（和 web 端一样：`package.json` 加 `"dsh-doyourweb-remote": "link:<绝对路径>"`，
    再把它加进 `dsh.profile.bundles`，然后 `pnpm install`）；
 2. 跑一次自检：`npm run verify:host -- --tls`（15 项：依赖可解析、桥可监听、扩展可生成、
    管理页鉴权、自签证书真握手）；

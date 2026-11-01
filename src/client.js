@@ -51,11 +51,11 @@ export function apply(ctx, { browserIcon, tabIcon, appIcon = browserIcon, applic
     if (["setup", "manage"].includes(candidate.value)) {
       let service;
       try { service = namespace(); }
-      catch (error) { console.error("dsh-doyourweb", error); return { text: "" }; }
+      catch (error) { console.error("dsh-doyourweb-remote", error); return { text: "" }; }
       void service[candidate.value]({}).then(result => {
         if (!result.ok) throw new Error(result.error?.message || "Browser setup is unavailable");
         window.open(result.value.url, "_blank", "noopener");
-      }).catch(error => console.error("dsh-doyourweb", error));
+      }).catch(error => console.error("dsh-doyourweb-remote", error));
       return { text: "" };
     }
     const value = JSON.parse(candidate.value);

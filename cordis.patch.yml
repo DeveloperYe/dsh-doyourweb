@@ -10,7 +10,7 @@
 # bridge only answers browser WebSocket traffic that carries the pairing token.
 - insert:
     - id: browser-tabs
-      name: dsh-doyourweb
+      name: dsh-doyourweb-remote
       config:
         port: 43187
         snapshotChars: 2400

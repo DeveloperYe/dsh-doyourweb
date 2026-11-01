@@ -1,10 +1,10 @@
-# dsh-doyourweb
+# dsh-doyourweb-remote
 
 Reference and control your existing, logged-in Chrome and Edge tabs from DeepSeek Harness, with compact page context and batched browser actions.
 
 Version `0.1.6` improves desktop snapshots, input diagnostics and connection UI, and adds `app_type` for text plus key chords. It supports draggable element annotations collected in the chat draft and `@` references to running Windows apps. App control discovers matching MCPs first. Installed local MCPs connect directly; installation requests approval. With no matching MCP, use computer use. Windows are shown when possible while background execution remains available. See [annotations and app control](docs/annotations-and-apps.md#english).
 
-[![CI](https://img.shields.io/github/actions/workflow/status/SheepofSheep/dsh-doyourweb/ci.yml?branch=main&label=CI)](https://github.com/SheepofSheep/dsh-doyourweb/actions/workflows/ci.yml)
+[![CI](https://img.shields.io/github/actions/workflow/status/DeveloperYe/dsh-doyourweb/ci.yml?branch=main&label=CI)](https://github.com/SheepofSheep/dsh-doyourweb/actions/workflows/ci.yml)
 [![License](https://img.shields.io/badge/license-MIT-green)](LICENSE)
 [![Node.js](https://img.shields.io/badge/Node.js-%3E%3D22-339933)](package.json)
 [![Playwright](https://img.shields.io/badge/Playwright-1.64.0-2EAD33)](package.json)
@@ -23,7 +23,7 @@ English | [简体中文](README.zh-CN.md)
 
 ## 01 · Introduction
 
-Browser tasks often depend on pages you have already opened and accounts you have already signed into. dsh-doyourweb connects those tabs to DeepSeek Harness instead of launching a separate automation browser or exporting cookies.
+Browser tasks often depend on pages you have already opened and accounts you have already signed into. dsh-doyourweb-remote connects those tabs to DeepSeek Harness instead of launching a separate automation browser or exporting cookies.
 
 The project has two parts: a DSH plugin and a companion Manifest V3 extension. The plugin adds browser references to the native `@` and `/` menus; the extension supplies tab metadata and browser control. Once paired, the extension reconnects in the background without keeping its popup open.
 
@@ -122,7 +122,7 @@ Only tabs referenced by the user in the current conversation are available to th
 For npm installation, open **Plugins > Add Plugin** in DSH, select the **official npm registry**, and enter:
 
 ```text
-dsh-doyourweb
+dsh-doyourweb-remote
 ```
 
 This requires a published package. If the registry returns `404`, use the local installation below. Mirrors may take time to sync a newly published version.
@@ -131,7 +131,7 @@ This requires a published package. If the registry returns `404`, use the local 
 
 ```sh
 git clone https://github.com/DeveloperYe/dsh-doyourweb.git
-cd dsh-doyourweb
+cd dsh-doyourweb-remote
 npm ci
 npm run build
 ```

@@ -1,5 +1,16 @@
 # 更新记录
 
+## 0.4.0 · 2026-11-01
+
+- **插件更名**：包名 / Cordis 插件名由 `dsh-doyourweb` 改为 `dsh-doyourweb-remote`，
+  与上游 npm 包（`dsh-doyourweb`）区分开，避免装错或版本混淆。
+  - 影响面：`PACKAGE` 常量（RPC 方法 id 由 `dsh-doyourweb#browserTabs/*` 变为
+    `dsh-doyourweb-remote#browserTabs/*`，host 与 client 同源，自动一致）、
+    `package.json`、`cordis.patch.yml`、下载物文件名（`dsh-doyourweb-remote-ca.crt`、
+    `dsh-doyourweb-remote-<key>.zip`）、日志前缀。
+  - **不变**：GitHub 仓库名 `DeveloperYe/dsh-doyourweb`、扩展显示名「DSH DoYourWeb」、
+    数据目录 `~/.dsh/browser-tabs`（配对令牌与自签 CA 因此不受影响，无需重新配对或重装证书）。
+
 ## 0.3.3 · 2026-10-31（DeveloperYe fork）
 
 - **发布端口与监听端口解耦**：`extensionPort` 在 TLS 模式下不再被 `tlsPort` 覆盖，

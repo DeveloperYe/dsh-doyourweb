@@ -61,8 +61,23 @@ There is no public hosted demo. After the DSH plugin starts, its default local c
 | Installation approval | Native DSH questions or a local `/apps` page; exact package versions and npm lifecycle scripts disabled. Optional repeat-install bypass is restricted to reviewed, trusted sources. |
 | Desktop fallback | Cua Driver MCP, bounded text-only reads by default, on-demand images, cached checks and automatic launch for selected apps and explicit stops for repeated polling. |
 | Mouse input | `app_mouse` batches up to 8 clicks, double/right clicks, scrolls and drags from one visual snapshot; separate foreground approval. |
+| Local file upload | `browser_upload` plus batch `upload` / `drop`: hidden inputs, custom file choosers and cross-origin iframes. Files travel as local paths through `DOM.setFileInputFiles` - never as bytes to the model or extension - and only when you named the absolute path in this conversation. |
+| Same-page drag | `drag` from a ref/selector to `toRef`/`toSelector`, and `drop` of external files or MIME data. Neither action is replayed. |
+| Network metadata | `browser_network_requests` needs an explicit `start`, keeps at most 200 rows, filters by text/errors/static assets, pages and shows details. Query strings, credentials, headers and bodies are never stored, and capture clears on idle release. |
+| Chain diagnostics | Every command records `host_send -> extension_receive -> api_settle -> extension_response -> host_response` with timings, classified as TIMEOUT / DISCONNECTED / PERMISSION / COMMAND_FAILED. Review, export or cite them from the browser sidebar. |
+| Native browser sidebar | A left-nav panel for the current conversation: web pages, apps and diagnostics. Picked items append to the draft instead of sending. |
+| Collapsed context | Injected `<browser_context>` blocks fold into expandable reference chips in the UI while the model still receives the full text. |
+| Stopping long actions | The in-page activity hint carries a stop button that cancels the current call and later steps, keeping completed or uncertain receipts. |
+| Quieter desktop reads | Each desktop connection presents a window only on its first read (restoring it when minimized); later reads keep focus. `foreground:true` or `focus_window` presents again. |
 
 Browser budgets count JavaScript characters, including JSON escaping and metadata. App tool `limit` values bound body text; status, steps and image-path metadata are additional. MCP results omit duplicate JSON, and CLI stdout/stderr share one body budget. Character counts are not model tokens, and output budgets do not limit DOM traversal time.
+
+### 0.5.0 Additions (upstream 0.1.7-0.1.9 merged)
+
+- **Upload and drag**: `browser_upload` plus `upload`, `drag` and `drop` in `browser_act`; see [docs/browser-workflow.md](docs/browser-workflow.md).
+- **Network and diagnostics**: `browser_network_requests` for request metadata, plus stage-based diagnostics that show whether a call stalled in the extension, the debugger or the return path; rationale in [docs/architecture-optimization.md](docs/architecture-optimization.md).
+- **Interface**: a native browser sidebar, collapsed context chips, and a stop button for long actions.
+- **Reading controls**: `browser_read` accepts `scope: "main"`; `observe: "handle"` returns only a handle and cursor (cheaper, but read before reusing refs).
 
 ### WebMCP-First Control (Experimental)
 

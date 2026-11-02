@@ -1,5 +1,24 @@
 # 更新记录
 
+## 0.5.0 · 2026-11-02
+
+合并上游 `dsh-doyourweb` 0.1.7 / 0.1.8 / 0.1.9（39 个文件、+1291/−94）到本 fork，同时保留全部远程化改造。
+
+- **上传与拖拽**：新增 `browser_upload`；`browser_act` 增加 `upload` / `drag` / `drop` 与 `toRef`/`toSelector`/`data`/`frame`/`files`。文件只能走用户在本会话中给出的绝对路径，调用 CDP `DOM.setFileInputFiles`，不转发文件字节；隐藏 input、自定义文件选择器与跨域 iframe 均支持。
+- **网络元数据**：新增 `browser_network_requests`（start/list/details/clear/stop，200 条上限，只存方法、去查询串的 URL、状态、MIME、耗时；空闲释放即清空）。
+- **链路诊断**：新增 `src/diagnostics.js`，在 `bridge.js` 打点 `host_send` / `extension_receive` / `api_settle` / `extension_response` / `host_response` / `timeout` / `disconnect` 以及 CDP `connect_start|ready|failed`；扩展侧仅在上报开关打开时回传阶段。新增 `diagnostics` RPC 与面板日志视图。
+- **界面**：新增原生「浏览器」侧边栏（标签页/应用/诊断日志）、`context-display.js` 把注入上下文收纳为可展开引用、页面内操作提示与停止按钮、批注浮窗可收起/收纳。
+- **读取控制**：`browser_read` 支持 `scope: "main"`；`observe: "handle"` 返回句柄与游标；SPA query/hash 变化后允许继续观察。
+- **桌面**：每个连接首次读取展示窗口、后续读取不抢焦点；动作失败保留证据并新增 `failed_step` / `retryable:false`；Windows 窗口枚举复用按需 PowerShell worker（仅执行内置脚本，`-NoProfile -NonInteractive`）。
+- **CDP**：`connectOverCDP` 增加 `isLocal: true`，否则 Playwright 会把上传路径转成 base64 载荷。
+- **本 fork 的适配**（上游没有的）：
+  - 保留 `PACKAGE = "dsh-doyourweb-remote"` 与全部远程能力（`bind`/`hosts`/`remote`/`tls`/`tlsPort`/`extensionPort`/`publicUrl`）。
+  - **不合并**上游 0.1.7 引入的管理面令牌泄露：`/manage`、`/setup`、扩展包下载仍要求每次启动的密钥。
+  - `scripts/test-browser.mjs`：`连接设置` 改为幂等展开（本 fork 默认展开）、配对改走徽标 PIN + `/setup/pair`、管理页用 `manageUrl()`、上传路径断言按 `realpath` 归一化（TEMP 为 8.3 短路径的系统上不再假失败）。
+  - 版本号随包名统一为 0.5.0（`package.json` 与 `extension/manifest.json`）。
+
+测试：`npm test` 166/166、`npm run test:browser` 5 个 PASS 段全通过、`npm run test:generated` 通过、`npm run verify:host` 13/13。
+
 ## 0.4.0 · 2026-11-01
 
 - **插件更名**：包名 / Cordis 插件名由 `dsh-doyourweb` 改为 `dsh-doyourweb-remote`，

@@ -64,6 +64,14 @@
 | 桌面回退 | 使用 Cua Driver MCP，默认只读有限控件树、按需截图；尽量显示所选窗口，也支持后台执行，反复读取无变化时停止。 |
 | 键盘输入 | `app_type` 支持文本加 Enter、Tab、Esc 或组合键；可选 `expect` 一次读取校验结果。 |
 | 鼠标操作 | `app_mouse` 支持点击、双击、右键、滚动和拖拽，一次画面读取最多执行 8 个已知目标动作；前台操作单独确认。 |
+| 本地文件上传 | `browser_upload` 与批处理里的 `upload` / `drop`：支持隐藏 input、自定义文件选择器和跨域 iframe；文件走本地路径（`DOM.setFileInputFiles`），不向模型或扩展转发字节，且必须由你在本会话中给出绝对路径。 |
+| 元素拖拽 | 同一文档内 `drag`（源 → `toRef`/`toSelector`）与外部文件/MIME 数据 `drop`，两者都不会重放。 |
+| 网络元数据 | `browser_network_requests` 需显式 `start`，最多保留 200 条，可按关键字/仅错误/静态资源过滤、分页、看详情；**不记录**查询串、凭据、请求头和正文，空闲释放即清空。 |
+| 链路诊断 | 每条命令记录 `host_send → extension_receive → api_settle → extension_response → host_response` 阶段与耗时，异常归类为 TIMEOUT / DISCONNECTED / PERMISSION / COMMAND_FAILED；可在「浏览器」侧边栏查看、导出或引用进对话。 |
+| 原生浏览器侧边栏 | 左导航「浏览器」面板：当前会话的网页、应用与诊断日志三个视图，引用直接追加到草稿，不自动发送。 |
+| 上下文收纳 | `<browser_context>` 等注入内容在界面上收纳为可展开的引用标签，**发给模型的原文不变**。 |
+| 可中断操作 | 页面内显示操作提示与停止按钮，点停止会取消本次调用与后续步骤，保留已完成/不确定效果的回执。 |
+| 桌面读取更安静 | 每个桌面连接首次读取才展示窗口（最小化会恢复），后续读取不抢焦点；`foreground:true` 或 `focus_window` 可显式再展示。 |
 
 浏览器输出预算按 JavaScript 字符计算，包含 JSON 转义和元数据；应用工具的 `limit` 限制正文，状态、步骤和图片路径等元数据另计。MCP 不重复返回相同 JSON，CLI 的 stdout 与 stderr 共用正文预算。字符数不等于模型 token 数，输出预算也不限制 DOM 遍历耗时。
 
@@ -181,6 +189,13 @@ npm run build
 | `browser_webmcp_call` | 用 `catalog`、`name`、`arguments` 调用匹配的页面工具，成功后返回 `nextCatalog` 供下一次调用。 |
 
 同时授权了多个标签页时，工具调用需要通过 `tab` 指定已引用的页面。
+
+### 0.5.0 新增能力（合并上游 0.1.7–0.1.9）
+
+- **上传与拖拽**：`browser_upload`、`browser_act` 的 `upload` / `drag` / `drop`，详见 [docs/browser-workflow.md](docs/browser-workflow.md)。
+- **网络与诊断**：`browser_network_requests` 抓请求元数据；诊断事件按阶段记录，用于判断"卡在扩展、调试器还是返回途中"。设计取舍见 [docs/architecture-optimization.md](docs/architecture-optimization.md)。
+- **界面**：新增「浏览器」侧边栏与上下文收纳标签，页面内可中断长操作。
+- **读取控制**：`browser_read` 支持 `scope: "main"` 只取正文；`observe: "handle"` 只回句柄与游标（省 token，重用 refs 前需先读一次）。
 
 ### 批注与应用控制
 

@@ -1,6 +1,6 @@
 import { chromium } from "playwright-core";
 import { createServer } from "node:http";
-import { mkdtemp, readFile, rm, mkdir } from "node:fs/promises";
+import { mkdtemp, readFile, rm, mkdir, writeFile, realpath } from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
 import { pathToFileURL } from "node:url";
@@ -15,6 +15,12 @@ import { Annotations } from "../src/annotations.js";
 const home = await mkdtemp(path.join(os.tmpdir(), "dsh-browser-test-"));
 const favicon = await readFile(new URL("../extension/icons/icon-16.png", import.meta.url));
 const webmcpFixture = await readFile(new URL("../test/fixtures/webmcp.html", import.meta.url), "utf8");
+const uploadServer = createServer((_req, response) => {
+  response.setHeader("Content-Type", "text/html");
+  response.end('<label>Frame attachment <input type="file" id="frame-file"></label><input type="file" id="frame-hidden" hidden>');
+});
+await new Promise(resolve => uploadServer.listen(0, "127.0.0.1", resolve));
+const uploadUrl = `http://127.0.0.1:${uploadServer.address().port}`;
 const server = createServer((req, response) => {
   if (req.url === "/favicon.png") {
     response.setHeader("Content-Type", "image/png");
@@ -32,7 +38,7 @@ const server = createServer((req, response) => {
     return;
   }
   response.setHeader("Content-Type", "text/html");
-  response.end(req.url === "/frame" ? '<button onclick="this.textContent=\'Frame clicked\'">Frame button</button>' : `<!doctype html><html><title>DSH Browser Test</title><link rel="icon" href="/favicon.png"><h1>Browser test</h1><label>Name <input id="name"></label><label><input type="checkbox" id="enabled">Enabled</label><button id="save">Save</button><output id="out"></output><iframe src="/frame"></iframe><script>document.querySelector('#save').onclick=()=>document.querySelector('#out').textContent='Saved '+document.querySelector('#name').value;</script></html>`);
+  response.end(req.url === "/frame" ? '<button onclick="this.textContent=\'Frame clicked\'">Frame button</button>' : `<!doctype html><html><title>DSH Browser Test</title><link rel="icon" href="/favicon.png"><nav>Navigation remains available</nav><main><h1>Browser test</h1><label>Name <input id="name"></label><label><input type="checkbox" id="enabled">Enabled</label><button id="save">Save</button><output id="out"></output><input type="file" id="hidden-file" hidden><button id="choose" onclick="document.querySelector('#hidden-file').click()">Choose attachment</button><button id="soft" onclick="history.pushState({},'', '?panel=2#new');document.querySelector('#out').textContent='New panel'">Soft route</button></main><iframe src="/frame"></iframe><iframe id="upload-frame" src="${uploadUrl}"></iframe><script>document.querySelector('#save').onclick=()=>document.querySelector('#out').textContent='Saved '+document.querySelector('#name').value;</script></html>`);
 });
 await new Promise(resolve => server.listen(0, "127.0.0.1", resolve));
 const fixtureUrl = `http://127.0.0.1:${server.address().port}`;
@@ -56,7 +62,12 @@ async function configurePort(port) {
     // its buttons, so a click issued before that lands on a dead handler. The
     // endpoint label only appears after the popup's first refresh() has completed.
     await popup.waitForFunction(() => (document.querySelector("#endpoint")?.textContent || "").includes("://"), null, { timeout: 15000 });
-    await popup.getByText("连接设置", { exact: true }).click();
+    // This fork ships 连接设置 expanded, so an unconditional click would collapse it
+    // and hide #port. Force it open instead of toggling.
+    await popup.evaluate(() => {
+      const details = [...document.querySelectorAll("details")].find(node => node.textContent.includes("连接设置"));
+      if (details) details.open = true;
+    });
     await popup.fill("#port", String(port));
     const applied = () => popup.waitForFunction(value => (document.querySelector("#endpoint")?.textContent || "").includes(`:${value}/`), port, { timeout: 5000 });
     await popup.click("#save-port");
@@ -169,7 +180,108 @@ try {
   const frameResult = await engine.act(tab.ref, { snapshot: frames.snapshot, observe: "summary",
     steps: [{ op: "click", ref: frameRef }] });
   assert.equal(frameResult.completed.length, 1, JSON.stringify(frameResult));
-  assert.equal(await page.frameLocator("iframe").getByRole("button").textContent(), "Frame clicked");
+  assert.equal(await page.frameLocator("iframe:not(#upload-frame)").getByRole("button").textContent(), "Frame clicked");
+  const main = await engine.read(tab.ref, { scope: "main" });
+  assert.equal(main.content.includes("Navigation remains available"), false);
+  assert.match((await engine.read(tab.ref)).content, /Navigation remains available/);
+  const file = path.join(home, "attachment.txt"); await writeFile(file, "local fixture only");
+  const commands = [], request = bridge.request.bind(bridge);
+  bridge.request = (profile, method, params) => {
+    if (method === "chrome.debugger.sendCommand" && params[1] === "DOM.setFileInputFiles") commands.push(params[2]);
+    return request(profile, method, params);
+  };
+  let uploadRead = await engine.read(tab.ref);
+  const attached = await engine.upload(tab.ref, { snapshot: uploadRead.snapshot, selector: "#hidden-file", files: [file], observe: "handle" });
+  assert.equal(attached.completed.length, 1, JSON.stringify(attached));
+  assert.equal(attached.content, undefined); assert.equal(attached.refs, "read_required");
+  assert.equal(await page.locator("#hidden-file").evaluate(async input => input.files[0].text()), "local fixture only");
+  await assert.rejects(engine.act(tab.ref, { snapshot: attached.snapshot, steps: [{ op: "click", ref: saveRef }] }), /withheld/);
+  const resumed = await engine.read(tab.ref, { cursor: attached.cursor }); assert.ok(resumed.content);
+  const chooser = await engine.upload(tab.ref, { snapshot: resumed.snapshot, selector: "#choose", files: [file], observe: "summary" });
+  assert.equal(chooser.completed.length, 1, JSON.stringify(chooser));
+  uploadRead = await engine.read(tab.ref);
+  const frameUpload = await engine.act(tab.ref, { snapshot: uploadRead.snapshot, observe: "summary", steps: [
+    { op: "upload", frame: "#upload-frame", selector: "#frame-hidden", files: [file] },
+    { op: "fill", selector: "#name", value: "Uploaded" }, { op: "click", selector: "#save" },
+  ] });
+  assert.equal(frameUpload.completed.length, 3, JSON.stringify(frameUpload));
+  assert.equal(await page.frameLocator("#upload-frame").locator("#frame-hidden").evaluate(input => input.files[0].name), "attachment.txt");
+  assert.equal(commands.length, 3, "all uploads must use DOM.setFileInputFiles rather than base64 payloads");
+  const canonicalFile = await realpath(file);
+  for (const command of commands) assert.deepEqual(command.files.map(entry => entry.toLowerCase()), [canonicalFile.toLowerCase()],
+    "upload paths must reach CDP unchanged apart from 8.3 short-name expansion");
+  bridge.request = request;
+  await page.evaluate(() => {
+    const source = document.createElement("button"); source.id = "drag-source"; source.draggable = true; source.textContent = "Drag source";
+    source.ondragstart = event => event.dataTransfer.setData("text/plain", "moved");
+    const zone = document.createElement("div"); zone.id = "drop-zone"; zone.textContent = "Drop target"; zone.style.cssText = "padding:30px;border:1px solid";
+    zone.ondragover = event => event.preventDefault();
+    zone.ondrop = async event => {
+      event.preventDefault(); zone.dataset.drops = String(+(zone.dataset.drops || 0) + 1);
+      zone.dataset.text = event.dataTransfer.getData("text/plain");
+      if (event.dataTransfer.files.length) zone.dataset.file = await event.dataTransfer.files[0].text();
+    };
+    document.querySelector("main").append(source, zone);
+  });
+  const dragRead = await engine.read(tab.ref);
+  const drag = await engine.act(tab.ref, { snapshot: dragRead.snapshot, observe: "handle", steps: [
+    { op: "drag", selector: "#drag-source", toSelector: "#drop-zone" },
+  ] });
+  assert.equal(drag.completed.length, 1, JSON.stringify(drag));
+  assert.equal(await page.locator("#drop-zone").getAttribute("data-text"), "moved");
+  const drop = await engine.act(tab.ref, { snapshot: drag.snapshot, observe: "summary", steps: [
+    { op: "drop", selector: "#drop-zone", files: [file], data: { "text/plain": "external data" } },
+  ] });
+  assert.equal(drop.completed.length, 1, JSON.stringify(drop));
+  assert.equal(await page.locator("#drop-zone").getAttribute("data-text"), "external data");
+  await page.waitForFunction(() => document.querySelector("#drop-zone").dataset.file === "local fixture only");
+  assert.equal(await page.locator("#drop-zone").getAttribute("data-drops"), "2", "neither action replays a drop");
+  assert.equal((await engine.network(tab.ref)).capturing, false);
+  const networkStart = await engine.network(tab.ref, { action: "start" }); assert.ok(networkStart.capturingSince);
+  const capturedPage = await bridge.page(tab.ref);
+  const capturedResponse = capturedPage.waitForResponse(response => response.url().includes("/api/test?"));
+  await page.evaluate(async () => { await fetch("/api/test?token=private", { method: "POST", body: "private input", headers: { "X-Private": "private" } }); });
+  await capturedResponse;
+  const network = await engine.network(tab.ref, { query: "/api/test" });
+  assert.equal(network.requests.length, 1); assert.equal(network.requests[0].status, 200);
+  const networkDetail = await engine.network(tab.ref, { action: "details", requestId: network.requests[0].id });
+  assert.equal(networkDetail.request.method, "POST"); assert.equal(JSON.stringify(networkDetail).includes("private"), false);
+  assert.equal((await engine.network(tab.ref, { action: "stop" })).capturing, false);
+  const diagnostic = bridge.diagnostics.state();
+  const responseEvent = diagnostic.events.findLast(event => event.phase === "host_response");
+  const phases = diagnostic.events.filter(event => event.correlationId === responseEvent.correlationId).map(event => event.phase);
+  for (const phase of ["host_send", "extension_receive", "api_settle", "extension_response", "host_response"]) assert.ok(phases.includes(phase), `diagnostic stage ${phase}`);
+  assert.equal(JSON.stringify(diagnostic).includes("private"), false, "diagnostics never store request/query/body content");
+  console.log("PASS: same-page element drag, authorized local file and MIME drop, opt-in redacted network capture through the existing extension relay.");
+  const softRead = await engine.read(tab.ref);
+  const soft = await engine.act(tab.ref, { snapshot: softRead.snapshot, observe: "summary", steps: [
+    { op: "click", selector: "#soft" }, { op: "extract", selector: "#out" },
+  ] });
+  assert.equal(soft.completed.length, 2, JSON.stringify(soft));
+  await page.goto(fixtureUrl);
+  const stopRead = await engine.read(tab.ref);
+  const stopping = engine.act(tab.ref, { snapshot: stopRead.snapshot, observe: "summary", steps: [
+    { op: "click", selector: "#save" }, { op: "wait", selector: "#never", timeout: 8000 }, { op: "fill", selector: "#name", value: "must not run" },
+  ] });
+  await page.locator("[data-dsh-activity]").waitFor();
+  assert.equal(await page.evaluate(() => document.querySelector("[data-dsh-activity]").shadowRoot), null);
+  if (process.env.DSH_TEST_ARTIFACTS) {
+    await mkdir(process.env.DSH_TEST_ARTIFACTS, { recursive: true });
+    await page.screenshot({ path: path.join(process.env.DSH_TEST_ARTIFACTS, "browser-activity.png") });
+  }
+  const activityCDP = bridge.cdp(tab.ref);
+  const { root: activityDocument } = await activityCDP.send("DOM.getDocument", { depth: -1, pierce: true });
+  const findActivity = node => node.attributes?.includes("data-dsh-activity") ? node
+    : [...(node.children || []), ...(node.shadowRoots || [])].map(findActivity).find(Boolean);
+  const activityHost = findActivity(activityDocument);
+  const { nodeId: stopId } = await activityCDP.send("DOM.querySelector", { nodeId: activityHost.shadowRoots[0].nodeId, selector: "button" });
+  const { model: stopBox } = await activityCDP.send("DOM.getBoxModel", { nodeId: stopId });
+  await page.mouse.click((stopBox.content[0] + stopBox.content[4]) / 2, (stopBox.content[1] + stopBox.content[5]) / 2);
+  const stopped = await stopping; await activityCDP.detach();
+  assert.equal(stopped.cancelled, true, JSON.stringify(stopped));
+  assert.ok(stopped.completed.length <= 1); assert.equal(await page.locator("#name").inputValue(), "");
+  assert.equal(await page.locator("[data-dsh-activity]").count(), 0, "stopping removes the private controls");
+  console.log("PASS: local-path uploads into hidden inputs, custom file chooser and cross-origin iframe, batch upload/fill/submit, handle refs, optional main, SPA selectors and live HUD stop cancellation.");
   const beforeReload = await engine.read(tab.ref);
   await page.reload();
   await assert.rejects(engine.act(tab.ref, { snapshot: beforeReload.snapshot, steps: [{ op: "click", selector: "#save" }] }), /stale/);
@@ -341,11 +453,17 @@ try {
   assert.equal(annotationMessages[1].mode, "draft");
   await reopened.reload();
   await toolbar.waitFor();
-  assert.equal(await reopened.frameLocator("iframe").locator('[data-dsh-annotation="toolbar"]').count(), 0, "toolbar must not be injected into child frames");
+  assert.equal(await reopened.frameLocator("iframe:not(#upload-frame)").locator('[data-dsh-annotation="toolbar"]').count(), 0, "toolbar must not be injected into child frames");
   const artifactDir = process.env.DSH_TEST_ARTIFACTS;
   if (artifactDir) await mkdir(artifactDir, { recursive: true });
   for (const width of [1280, 375]) {
     await reopened.setViewportSize({ width, height: 800 });
+    // setViewportSize can return before the browser dispatches resize and the
+    // toolbar clamps its position. Assert the settled UI, as the UI test does.
+    await reopened.waitForFunction(() => {
+      const box = document.querySelector('[data-dsh-annotation="toolbar"]').getBoundingClientRect();
+      return box.x >= 0 && box.right <= innerWidth;
+    });
     const box = await toolbar.boundingBox(); assert.ok(box.x >= 0 && box.x + box.width <= width, "annotation controls must fit mobile and desktop");
     if (artifactDir) await reopened.screenshot({ path: path.join(artifactDir, `annotation-${width}.png`) });
   }
@@ -390,6 +508,7 @@ try {
   await bridge.close();
   await browser?.close();
   await new Promise(resolve => server.close(resolve));
+  await new Promise(resolve => uploadServer.close(resolve));
   // Only the fresh disposable directory returned by mkdtemp is removed.
   assert.equal(path.dirname(path.resolve(home)), path.resolve(os.tmpdir()));
   assert.ok(path.basename(home).startsWith("dsh-browser-test-"));

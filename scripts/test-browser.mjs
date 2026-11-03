@@ -270,14 +270,29 @@ try {
     await page.screenshot({ path: path.join(process.env.DSH_TEST_ARTIFACTS, "browser-activity.png") });
   }
   const activityCDP = bridge.cdp(tab.ref);
-  const { root: activityDocument } = await activityCDP.send("DOM.getDocument", { depth: -1, pierce: true });
   const findActivity = node => node.attributes?.includes("data-dsh-activity") ? node
     : [...(node.children || []), ...(node.shadowRoots || [])].map(findActivity).find(Boolean);
-  const activityHost = findActivity(activityDocument);
-  const { nodeId: stopId } = await activityCDP.send("DOM.querySelector", { nodeId: activityHost.shadowRoots[0].nodeId, selector: "button" });
-  const { model: stopBox } = await activityCDP.send("DOM.getBoxModel", { nodeId: stopId });
-  await page.mouse.click((stopBox.content[0] + stopBox.content[4]) / 2, (stopBox.content[1] + stopBox.content[5]) / 2);
-  const stopped = await stopping; await activityCDP.detach();
+  // The HUD repositions itself while the batch runs, so one captured box can go stale and
+  // the click lands beside the button. A human would simply press stop again; retry with a
+  // fresh box instead of asserting on a race.
+  const pressStop = async () => {
+    const { root } = await activityCDP.send("DOM.getDocument", { depth: -1, pierce: true });
+    const host = findActivity(root);
+    if (!host?.shadowRoots?.length) return false;
+    const { nodeId } = await activityCDP.send("DOM.querySelector", { nodeId: host.shadowRoots[0].nodeId, selector: "button" });
+    if (!nodeId) return false;
+    const { model } = await activityCDP.send("DOM.getBoxModel", { nodeId });
+    await page.mouse.click((model.content[0] + model.content[4]) / 2, (model.content[1] + model.content[5]) / 2);
+    return true;
+  };
+  const settled = stopping.then(value => value, error => ({ error: error.message }));
+  let stopped;
+  for (let attempt = 0; attempt < 4 && !stopped; attempt++) {
+    if (!(await pressStop())) { await page.waitForTimeout(200); continue; }
+    stopped = await Promise.race([settled, page.waitForTimeout(800).then(() => undefined)]);
+  }
+  stopped = stopped ?? await settled;
+  await activityCDP.detach();
   assert.equal(stopped.cancelled, true, JSON.stringify(stopped));
   assert.ok(stopped.completed.length <= 1); assert.equal(await page.locator("#name").inputValue(), "");
   assert.equal(await page.locator("[data-dsh-activity]").count(), 0, "stopping removes the private controls");
@@ -502,6 +517,19 @@ try {
   assert.equal(annotationMessages.at(-1).sessionId, "another-session");
   await annotations.close();
   console.log("PASS: isolated element picker, trusted-click-only direct conversation messages, cropped image attachments without annotation files, session switching, draft recovery and responsive management UI.");
+  // browser_open round-trips through the extension (chrome.tabs.create), so only a real
+  // browser can prove the whole path: open -> publish -> readable reference.
+  // The bridge was restarted earlier in this script, so anchor on a live tab instead of
+  // the original reference.
+  const anchor = bridge.list().find(item => item.url.startsWith(fixtureUrl));
+  assert.ok(anchor, "a live fixture tab must be published before opening a new one");
+  const opened = await bridge.openTab(anchor.ref, `${fixtureUrl}/opened-by-bridge`);
+  assert.equal(opened.tab.url, `${fixtureUrl}/opened-by-bridge`);
+  assert.match(opened.ref, /^dsh-browser:\/\/[a-z0-9-]+\/\d+$/);
+  const openedRead = await engine.read(opened.ref);
+  assert.ok(openedRead.snapshot, "a tab opened through the extension must be readable at once");
+  assert.ok(bridge.list().some(item => item.ref === opened.ref), "the new tab must appear in the @ inventory");
+  console.log("PASS: browser_open creates a real tab through the extension, publishes it, and reads it immediately.");
   engine.close();
   console.log("PASS: code pairing, cached tab icons, background reconnect, browser-lifetime authorization, authenticated CDP, batched fill/click/wait/extract, summary output, iframe refs through the engine, stale navigation, in-flight cancellation, screenshot, idle detach and reattach without closing the tab.");
 } finally {

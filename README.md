@@ -63,6 +63,7 @@ There is no public hosted demo. After the DSH plugin starts, its default local c
 | Mouse input | `app_mouse` batches up to 8 clicks, double/right clicks, scrolls and drags from one visual snapshot; separate foreground approval. |
 | Local file upload | `browser_upload` plus batch `upload` / `drop`: hidden inputs, custom file choosers and cross-origin iframes. Files travel as local paths through `DOM.setFileInputFiles` - never as bytes to the model or extension - and only when you named the absolute path in this conversation. |
 | Same-page drag | `drag` from a ref/selector to `toRef`/`toSelector`, and `drop` of external files or MIME data. Neither action is replayed. |
+| Opening pages | `browser_open` opens a new `http(s)` tab in the connected browser and authorizes **only that tab** (until the session ends). The reference behaves like an `@`-selected tab, so read it before acting. |
 | Network metadata | `browser_network_requests` needs an explicit `start`, keeps at most 200 rows, filters by text/errors/static assets, pages and shows details. Query strings, credentials, headers and bodies are never stored, and capture clears on idle release. |
 | Chain diagnostics | Every command records `host_send -> extension_receive -> api_settle -> extension_response -> host_response` with timings, classified as TIMEOUT / DISCONNECTED / PERMISSION / COMMAND_FAILED. Review, export or cite them from the browser sidebar. |
 | Native browser sidebar | A left-nav panel for the current conversation: web pages, apps and diagnostics. Picked items append to the draft instead of sending. |
@@ -71,6 +72,15 @@ There is no public hosted demo. After the DSH plugin starts, its default local c
 | Quieter desktop reads | Each desktop connection presents a window only on its first read (restoring it when minimized); later reads keep focus. `foreground:true` or `focus_window` presents again. |
 
 Browser budgets count JavaScript characters, including JSON escaping and metadata. App tool `limit` values bound body text; status, steps and image-path metadata are additional. MCP results omit duplicate JSON, and CLI stdout/stderr share one body budget. Character counts are not model tokens, and output budgets do not limit DOM traversal time.
+
+### 0.5.1 Addition: `browser_open`
+
+When the page you need is not open yet, the model can call `browser_open` instead of asking you to open a tab and cite it:
+
+- `http(s)` only; `file://`, `chrome://` and `javascript:` are refused so no privileged page ever reaches the bridge;
+- the tab is created through the extension (`chrome.tabs.create`), and the call returns only after the extension publishes it, so the reference is readable immediately;
+- the grant covers **that new tab only** and ends with the session; every other tab still needs `@`;
+- with several browsers connected, pass `tab` from an authorized tab to choose which browser opens it.
 
 ### 0.5.0 Additions (upstream 0.1.7-0.1.9 merged)
 

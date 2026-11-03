@@ -113,6 +113,16 @@ async function command(message, connection) {
     case "chrome.debugger.sendCommand":
       if (!attached.has(target.tabId)) throw new Error("Tab is not attached");
       return chrome.debugger.sendCommand(target, args[1], args[2]);
+    case "dsh.openTab": {
+      // Only ordinary web origins: the extension must never open a privileged page on
+      // the bridge's behalf, and the bridge already rejects non-http(s) URLs.
+      const options = args[1] || {};
+      const url = String(options.url || "");
+      if (!/^https?:\/\//i.test(url)) throw new Error("Only http(s) URLs can be opened");
+      const created = await chrome.tabs.create({ url, active: options.active === true });
+      scheduleInventory();
+      return { tabId: created.id, url: created.url || url };
+    }
     case "dsh.focus": {
       const tab = await chrome.tabs.get(target);
       if (!supported(tab)) throw new Error("Tab is unsupported");

@@ -1,6 +1,6 @@
 {
   "name": "dsh-doyourweb-remote",
-  "version": "0.5.0",
+  "version": "0.5.1",
   "description": "Browser tabs, element annotations and MCP/CLI-first desktop app control for DeepSeek Harness",
   "type": "module",
   "license": "MIT",

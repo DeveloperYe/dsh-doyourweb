@@ -661,6 +661,37 @@ export class BrowserBridge extends EventEmitter {
     return { profile, tab, tabId };
   }
 
+  /**
+   * Open a new tab through the paired extension and wait until the inventory publishes
+   * it, so the returned reference resolves immediately. Only http(s) is accepted: a
+   * privileged URL would hand this bridge a page it must never control.
+   */
+  async openTab(ref, url, { active = false, timeoutMs = 15000 } = {}) {
+    const target = String(url ?? "").trim();
+    let parsed;
+    try { parsed = new URL(target); } catch { throw new Error("browser_open needs an absolute http(s) URL"); }
+    if (!["http:", "https:"].includes(parsed.protocol)) throw new Error("browser_open only opens http(s) URLs");
+    let profile;
+    if (ref) ({ profile } = this.resolve(ref));
+    else {
+      const connected = [...this.profiles.values()];
+      if (!connected.length) throw new Error("No browser is connected. Start the DSH browser extension in the browser you want to use.");
+      if (connected.length > 1) throw new Error("Several browsers are connected; pass an authorized tab reference so the new tab opens in the right one.");
+      [profile] = connected;
+    }
+    if (profile.ws?.readyState !== WebSocket.OPEN) throw new Error("Browser extension disconnected");
+    const created = await this.request(profile, "dsh.openTab", [{}, { url: parsed.href, active: active === true }]);
+    const tabId = created?.tabId;
+    if (!Number.isSafeInteger(tabId)) throw new Error("The browser extension did not report the new tab");
+    const deadline = Date.now() + Math.max(1000, Number(timeoutMs) || 15000);
+    while (Date.now() < deadline) {
+      const tab = profile.tabs?.get(tabId);
+      if (tab) return { ref: tab.ref, tab };
+      await new Promise(resolve => setTimeout(resolve, 50));
+    }
+    throw new Error("The new tab opened but the extension did not publish it in time; it may be a page the extension cannot expose");
+  }
+
   async page(ref) {
     await this.detachments.get(ref);
     const { profile, tab, tabId } = this.resolve(ref);

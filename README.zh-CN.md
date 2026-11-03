@@ -66,6 +66,7 @@
 | 鼠标操作 | `app_mouse` 支持点击、双击、右键、滚动和拖拽，一次画面读取最多执行 8 个已知目标动作；前台操作单独确认。 |
 | 本地文件上传 | `browser_upload` 与批处理里的 `upload` / `drop`：支持隐藏 input、自定义文件选择器和跨域 iframe；文件走本地路径（`DOM.setFileInputFiles`），不向模型或扩展转发字节，且必须由你在本会话中给出绝对路径。 |
 | 元素拖拽 | 同一文档内 `drag`（源 → `toRef`/`toSelector`）与外部文件/MIME 数据 `drop`，两者都不会重放。 |
+| 新建页面 | `browser_open`：在已连接的浏览器里新开一个 `http(s)` 标签页，并**只授权这一个新标签**（会话结束即失效）；返回的引用与 `@` 选中的标签等价，动作前先 `browser_read`。
 | 网络元数据 | `browser_network_requests` 需显式 `start`，最多保留 200 条，可按关键字/仅错误/静态资源过滤、分页、看详情；**不记录**查询串、凭据、请求头和正文，空闲释放即清空。 |
 | 链路诊断 | 每条命令记录 `host_send → extension_receive → api_settle → extension_response → host_response` 阶段与耗时，异常归类为 TIMEOUT / DISCONNECTED / PERMISSION / COMMAND_FAILED；可在「浏览器」侧边栏查看、导出或引用进对话。 |
 | 原生浏览器侧边栏 | 左导航「浏览器」面板：当前会话的网页、应用与诊断日志三个视图，引用直接追加到草稿，不自动发送。 |
@@ -189,6 +190,15 @@ npm run build
 | `browser_webmcp_call` | 用 `catalog`、`name`、`arguments` 调用匹配的页面工具，成功后返回 `nextCatalog` 供下一次调用。 |
 
 同时授权了多个标签页时，工具调用需要通过 `tab` 指定已引用的页面。
+
+### 0.5.1 新增能力：`browser_open`
+
+需要一页你还没打开过的网页时，不必手动开标签再 `@` 它——直接让模型调用 `browser_open`：
+
+- 只接受 `http(s)`：`file://`、`chrome://`、`javascript:` 一律拒绝，避免把特权页面交到桥手里；
+- 新标签通过扩展的 `chrome.tabs.create` 打开（不是伪造的 Target），打开后等扩展把它发布进清单再返回，所以拿到引用就能立刻读；
+- 授权**只覆盖这一个新标签**，随会话结束失效；其余标签仍需你 `@`。
+- 多个浏览器同时连着时，用 `tab` 指定一个已授权标签来决定"开在哪个浏览器"。
 
 ### 0.5.0 新增能力（合并上游 0.1.7–0.1.9）
 

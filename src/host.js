@@ -69,6 +69,14 @@ function tool(name, description, schema, execute) {
   };
 }
 
+/**
+ * Generated extensions plus an origin-relative download link for each one. Relative on
+ * purpose: the management page is opened both on loopback and through a published wss
+ * origin, and an absolute http://127.0.0.1 link would point at the operator's machine.
+ */
+export const decorateExtensions = source => (source.extensionBuilds || []).map(entry => ({ ...entry,
+  download: `/extension.zip?p=${encodeURIComponent(entry.key)}` }));
+
 export async function apply(ctx, config = {}) {
   ctx.inject(["fileReferences", "workingDirectory"], scope => {
     scope.effect(() => balanceFileReferences(scope.fileReferences, scope.workingDirectory), `${PACKAGE}: file candidates`);
@@ -106,9 +114,6 @@ export async function apply(ctx, config = {}) {
   //  - service.manage()/service.setup() hand the secret URL to the DSH client, which
   //    opens it in the browser where the cookie is then established.
   const managementUrl = `http://127.0.0.1:${bridge.port}/manage`;
-  /** Generated extensions plus the loopback download link for each one. */
-  const decorateExtensions = source => (source.extensionBuilds || []).map(entry => ({ ...entry,
-    download: `http://127.0.0.1:${source.port}/extension.zip?p=${encodeURIComponent(entry.key)}` }));
   const applications = new Applications({ home: path.join(home, "applications"), managementUrl,
     ask: request => {
       const questions = ctx.get?.("userQuestions");
@@ -137,7 +142,7 @@ export async function apply(ctx, config = {}) {
       case "revoke": return applications.revoke(request.id);
       case "link": return { token: bridge.settings.token, endpoint: bridge.endpointDescription(), bind: bridge.bind, hosts: bridge.hosts, port: bridge.port };
       case "extensions": return { builds: decorateExtensions(bridge), error: bridge.extensionBuildError, outDir: bridge.extensionOutDir, version: bridge.version,
-        tls: bridge.tlsActive ? { port: bridge.tlsPort, publicPort: bridge.extensionPort || bridge.tlsPort, notAfter: bridge.ca?.notAfter, ca: `${bridge.publicOrigin()}/ca.crt`,
+        tls: bridge.tlsActive ? { port: bridge.tlsPort, publicPort: bridge.extensionPort || bridge.tlsPort, notAfter: bridge.ca?.notAfter, ca: "/ca.crt",
           names: bridge.ca?.names, ips: bridge.ca?.ips } : undefined };
       case "rebuild": await bridge.buildExtensions({ force: true }); bridge.extensionBuildError = undefined;
         return { builds: decorateExtensions(bridge), outDir: bridge.extensionOutDir, version: bridge.version };

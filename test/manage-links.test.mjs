@@ -39,3 +39,23 @@ test("the setup page links downloads relatively instead of pinning loopback", as
     await rm(root, { recursive: true, force: true });
   }
 });
+
+test("the download endpoint itself serves the zip when the secret is presented", async () => {
+  const root = await mkdtemp(path.join(os.tmpdir(), "dsh-manage-zip-"));
+  const bridge = new BrowserBridge({ home: path.join(root, "bridge"), port: 0 });
+  try {
+    await bridge.start();
+    const key = (bridge.extensionBuilds || [])[0]?.key;
+    assert.ok(key, "the bridge must generate at least one extension");
+    // Same-origin relative form the page now emits, resolved against the secret URL origin.
+    const response = await fetch(`http://127.0.0.1:${bridge.port}/extension.zip?p=${encodeURIComponent(key)}&k=${bridge.manageSecret}`);
+    assert.equal(response.status, 200);
+    const bytes = Buffer.from(await response.arrayBuffer());
+    assert.equal(bytes.subarray(0, 2).toString(), "PK", "a zip, not an error page");
+    const anonymous = await fetch(`http://127.0.0.1:${bridge.port}/extension.zip?p=${encodeURIComponent(key)}`);
+    assert.equal(anonymous.status, 404, "without the secret the download stays hidden");
+  } finally {
+    await bridge.close();
+    await rm(root, { recursive: true, force: true });
+  }
+});

@@ -313,11 +313,14 @@ export class BrowserBridge extends EventEmitter {
     }
     this.server = http.createServer((request, response) => { void this.handleHttp(request, response); });
     this.ws = new WebSocketServer({ noServer: true, maxPayload: 8 * 1024 * 1024 });
+    // A browser answers WebSocket pings from its network stack even after the extension
+    // worker was suspended, so pong says nothing about liveness. The extension itself
+    // pings every 20s, so only silence in *application* messages means it is gone.
     this.heartbeat = setInterval(() => {
+      const now = Date.now();
+      const idle = this.heartbeatMs * 3;
       for (const client of this.ws?.clients || []) {
-        if ((client.missedPongs || 0) >= 2) { client.terminate?.(); continue; }
-        client.missedPongs = (client.missedPongs || 0) + 1;
-        try { client.ping?.(); } catch { /* the socket is already gone */ }
+        if (client.lastSeen && now - client.lastSeen > idle) client.terminate?.();
       }
     }, this.heartbeatMs);
     this.heartbeat.unref?.();
@@ -559,12 +562,12 @@ export class BrowserBridge extends EventEmitter {
   }
 
   acceptExtension(ws) {
-    // No pong for two rounds means the worker is gone even if TCP has not noticed.
-    ws.missedPongs = 0;
-    ws.on("pong", () => { ws.missedPongs = 0; });
+    // Any message from the extension resets the idle clock; the sweeper reaps silence.
+    ws.lastSeen = Date.now();
     let profile;
     ws.on("error", () => {});
     ws.on("message", raw => {
+      ws.lastSeen = Date.now();
       try {
         const data = JSON.parse(raw.toString());
         if (data.method === "dsh.inventory") {
@@ -586,7 +589,9 @@ export class BrowserBridge extends EventEmitter {
             for (const old of this.profiles.values()) {
               if (old.sourceId === info.profile) {
                 this.profiles.delete(old.id);
-                old.ws.close(1000, "Reconnected");
+                // A suspended worker never answers a close handshake, so a graceful close
+                // would keep the socket around; the replacement owns this browser now.
+                old.ws.terminate?.();
               }
             }
             profile = { id, sourceId: info.profile, sessionId: info.browserSession,
@@ -691,8 +696,9 @@ export class BrowserBridge extends EventEmitter {
     else {
       const connected = [...this.profiles.values()];
       if (!connected.length) throw new Error("No browser is connected. Start the DSH browser extension in the browser you want to use.");
-      if (connected.length > 1) throw new Error("Several browsers are connected; pass an authorized tab reference so the new tab opens in the right one.");
-      [profile] = connected;
+      // Reconnects can leave the previous profile registered for a moment; the freshest
+      // connection is the browser the user is actually working in.
+      [profile] = connected.sort((a, b) => (b.ws?.lastSeen || 0) - (a.ws?.lastSeen || 0));
     }
     if (profile.ws?.readyState !== WebSocket.OPEN) throw new Error("Browser extension disconnected");
     const created = await this.request(profile, "dsh.openTab", [{}, { url: parsed.href, active: active === true }]);

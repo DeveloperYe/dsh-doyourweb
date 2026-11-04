@@ -36,11 +36,25 @@ test("browser_open needs a connected browser", async () => {
   });
 });
 
-test("browser_open needs a tab reference when several browsers are connected", async () => {
+test("browser_open uses the freshest connection when several browsers are registered", async () => {
   await withBridge(async bridge => {
-    bridge.profiles.set("a", fakeProfile("a"));
-    bridge.profiles.set("b", fakeProfile("b"));
-    await assert.rejects(() => bridge.openTab(undefined, "https://example.com/"), /Several browsers are connected/);
+    // A reconnect can leave the superseded profile registered for a moment; the newest
+    // connection is the browser the user is actually working in.
+    const stale = fakeProfile("a");
+    const fresh = fakeProfile("b");
+    stale.ws.lastSeen = Date.now() - 60000;
+    fresh.ws.lastSeen = Date.now();
+    bridge.profiles.set("a", stale);
+    bridge.profiles.set("b", fresh);
+    let target;
+    bridge.request = async profile => {
+      target = profile;
+      setTimeout(() => fresh.tabs.set(77, { id: 77, ref: "dsh-browser://b/77", title: "Opened", url: "https://example.com/" }), 10);
+      return { tabId: 77 };
+    };
+    const opened = await bridge.openTab(undefined, "https://example.com/");
+    assert.equal(target, fresh);
+    assert.equal(opened.ref, "dsh-browser://b/77");
   });
 });
 

@@ -530,6 +530,12 @@ try {
   assert.ok(openedRead.snapshot, "a tab opened through the extension must be readable at once");
   assert.ok(bridge.list().some(item => item.ref === opened.ref), "the new tab must appear in the @ inventory");
   console.log("PASS: browser_open creates a real tab through the extension, publishes it, and reads it immediately.");
+  const closing = await bridge.closeTab(opened.ref);
+  assert.equal(closing.closed, true, JSON.stringify(closing));
+  assert.equal(bridge.list().some(item => item.ref === opened.ref), false, "a closed tab leaves the inventory");
+  // Closing twice is not an error: the caller only wants the tab gone.
+  assert.equal((await bridge.closeTab(opened.ref)).closed, true, "closing an already-closed tab is idempotent");
+  console.log("PASS: browser_close closes a bridge-opened tab and stays idempotent when it is already gone.");
   engine.close();
   console.log("PASS: code pairing, cached tab icons, background reconnect, browser-lifetime authorization, authenticated CDP, batched fill/click/wait/extract, summary output, iframe refs through the engine, stale navigation, in-flight cancellation, screenshot, idle detach and reattach without closing the tab.");
 } finally {

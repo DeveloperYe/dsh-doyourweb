@@ -692,6 +692,25 @@ export class BrowserBridge extends EventEmitter {
     throw new Error("The new tab opened but the extension did not publish it in time; it may be a page the extension cannot expose");
   }
 
+  /**
+   * Close one tab through the paired extension and wait for the inventory to drop it.
+   * Resolving the reference directly (instead of {@link resolve}) keeps a tab that is
+   * already gone an idempotent success rather than an error.
+   */
+  async closeTab(ref, { timeoutMs = 5000 } = {}) {
+    const { profile: id, tabId } = parseRef(ref);
+    const profile = this.profiles.get(id);
+    if (!profile) throw new Error("Browser extension is offline or its browser session ended. Open /browser to connect again.");
+    if (profile.ws?.readyState !== WebSocket.OPEN) throw new Error("Browser extension disconnected");
+    const tab = profile.tabs?.get(tabId);
+    const relay = [...this.relays.values()].find(entry => entry.profile === profile && entry.tabId === tabId);
+    if (relay) await this.dropRelay(relay).catch(() => {});
+    await this.request(profile, "dsh.closeTab", [{ tabId }, { tabId }]);
+    const deadline = Date.now() + Math.max(1000, Number(timeoutMs) || 5000);
+    while (Date.now() < deadline && profile.tabs?.has(tabId)) await new Promise(resolve => setTimeout(resolve, 50));
+    return { ref, tabId, title: tab?.title || "", url: tab?.url || "", closed: true };
+  }
+
   async page(ref) {
     await this.detachments.get(ref);
     const { profile, tab, tabId } = this.resolve(ref);

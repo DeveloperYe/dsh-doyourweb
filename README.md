@@ -63,6 +63,7 @@ There is no public hosted demo. After the DSH plugin starts, its default local c
 | Mouse input | `app_mouse` batches up to 8 clicks, double/right clicks, scrolls and drags from one visual snapshot; separate foreground approval. |
 | Local file upload | `browser_upload` plus batch `upload` / `drop`: hidden inputs, custom file choosers and cross-origin iframes. Files travel as local paths through `DOM.setFileInputFiles` - never as bytes to the model or extension - and only when you named the absolute path in this conversation. |
 | Same-page drag | `drag` from a ref/selector to `toRef`/`toSelector`, and `drop` of external files or MIME data. Neither action is replayed. |
+| Closing your own tabs | `browser_close` only closes tabs **this conversation opened with browser_open**; tabs the user opened are refused. Omit `tab` to close every tab the conversation opened, closing twice is a success, and the grant is revoked. |
 | Opening pages | `browser_open` opens a new `http(s)` tab in the connected browser and authorizes **only that tab** (until the session ends). The reference behaves like an `@`-selected tab, so read it before acting. |
 | Network metadata | `browser_network_requests` needs an explicit `start`, keeps at most 200 rows, filters by text/errors/static assets, pages and shows details. Query strings, credentials, headers and bodies are never stored, and capture clears on idle release. |
 | Chain diagnostics | Every command records `host_send -> extension_receive -> api_settle -> extension_response -> host_response` with timings, classified as TIMEOUT / DISCONNECTED / PERMISSION / COMMAND_FAILED. Review, export or cite them from the browser sidebar. |
@@ -72,6 +73,13 @@ There is no public hosted demo. After the DSH plugin starts, its default local c
 | Quieter desktop reads | Each desktop connection presents a window only on its first read (restoring it when minimized); later reads keep focus. `foreground:true` or `focus_window` presents again. |
 
 Browser budgets count JavaScript characters, including JSON escaping and metadata. App tool `limit` values bound body text; status, steps and image-path metadata are additional. MCP results omit duplicate JSON, and CLI stdout/stderr share one body budget. Character counts are not model tokens, and output budgets do not limit DOM traversal time.
+
+### 0.6.0 Addition: `browser_close`
+
+- **Only its own tabs**: the host tracks the references `browser_open` returned per session; anything else is refused, so a page you opened can never be closed this way.
+- Omit `tab` to close every tab the conversation opened; pass one to close just that tab.
+- **Idempotent**: a tab that is already gone (including one you closed yourself) reports `closed`, not an error.
+- Closing **revokes the grant**, so later references fail loudly instead of acting on a stale page.
 
 ### 0.5.1 Addition: `browser_open`
 

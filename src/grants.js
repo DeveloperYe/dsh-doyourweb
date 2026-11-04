@@ -59,6 +59,21 @@ export class Grants {
     return true;
   }
 
+  /**
+   * Drop references a conversation no longer needs, for example a tab it closed
+   * again. Returns whether anything was removed.
+   */
+  async revoke(sessionId, refs) {
+    const allowed = this.sessions.get(sessionId);
+    if (!allowed) return false;
+    let changed = false;
+    for (const ref of refs) if (allowed.delete(ref)) changed = true;
+    if (!changed) return false;
+    if (!allowed.size) this.sessions.delete(sessionId);
+    await this.save();
+    return true;
+  }
+
   /** Persist the live grants, serialized so concurrent steps cannot interleave. */
   save() {
     if (!this.file) return this.writes;

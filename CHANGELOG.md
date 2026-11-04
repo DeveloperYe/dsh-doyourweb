@@ -1,5 +1,16 @@
 # 更新记录
 
+## 0.6.0 · 2026-11-05
+
+新增 `browser_close`：关闭**本会话自己用 browser_open 开的**标签页，用完自动收拾，不用人工关。
+
+- **授权边界**：宿主按会话记录 `browser_open` 返回的引用（最多 32 条/会话），`browser_close` 只接受名单内的引用；指向用户自己开的标签时直接报错拒绝。
+- 不传 `tab` → 关闭本会话开过的全部；传了就只关那一个。
+- **幂等**：标签已不存在（含用户手动关闭）时扩展把 `No tab with id` 视为成功，工具返回 `closed: true`。
+- 关闭后调用 `grants.revoke` 撤销授权并落盘，后续引用明确失效。
+- 扩展新增桥命令 `dsh.closeTab`（先 `chrome.debugger.detach` 再 `chrome.tabs.remove`，避免调试器挂住已关闭的标签）。
+- 测试：新增 `test/close-tab.test.mjs` 5 条（关闭指定标签与参数、已关闭时的幂等、断连/未知浏览器不发包、非法引用、grants.revoke 的删除与落盘）；`test-browser.mjs` 增加真机验证（open → close → 清单里消失 → 再关一次仍成功）。
+
 ## 0.5.2 · 2026-11-03
 
 修管理页里的下载链接：之前「浏览器扩展」页的 zip 与 CA 链接是**绝对的回环地址**

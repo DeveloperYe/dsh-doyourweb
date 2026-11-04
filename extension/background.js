@@ -123,6 +123,19 @@ async function command(message, connection) {
       scheduleInventory();
       return { tabId: created.id, url: created.url || url };
     }
+    case "dsh.closeTab": {
+      const options = args[1] || {};
+      const tabId = Number(options.tabId);
+      if (!Number.isSafeInteger(tabId)) throw new Error("dsh.closeTab needs a tab id");
+      // Detach first so the debugger does not outlive the tab and block a later reopen.
+      if (attached.delete(tabId)) await chrome.debugger.detach({ tabId }).catch(() => {});
+      await chrome.tabs.remove(tabId).catch(error => {
+        // A tab that is already gone is the outcome the caller asked for.
+        if (!/No tab with id|Invalid tab id|Invalid value/i.test(error?.message || "")) throw error;
+      });
+      scheduleInventory();
+      return { tabId, closed: true };
+    }
     case "dsh.focus": {
       const tab = await chrome.tabs.get(target);
       if (!supported(tab)) throw new Error("Tab is unsupported");

@@ -40,7 +40,7 @@ export class BrowserBridge extends EventEmitter {
   constructor({ home, port = 43187, extensionSource, idleTimeoutMs = 120000, bind = "127.0.0.1", hosts = [], remote = false,
     extensionScheme = "ws", extensionPort, extensionProfiles: profiles = [], autoBuild = true, publicUrl,
     tls = false, tlsPort = 8443, tlsIps = [], portFallback = false, tlsPortFallback = false,
-    diagnostics = new Diagnostics() } = {}) {
+    diagnostics = new Diagnostics(), heartbeatMs = 20000 } = {}) {
     super();
     this.home = home;
     this.port = port;
@@ -77,6 +77,10 @@ export class BrowserBridge extends EventEmitter {
     this.pairingFailures = 0;
     this.sequence = 0;
     this.diagnostics = diagnostics;
+    // A service worker can be suspended without a close frame, leaving a half-open socket
+    // that still owns a profile. Ping each client and drop the ones that stop answering.
+    this.heartbeatMs = Math.max(100, Number(heartbeatMs) || 20000);
+    this.heartbeat = undefined;
   }
 
   /** Whether the bridge listens only on this machine. */
@@ -309,6 +313,14 @@ export class BrowserBridge extends EventEmitter {
     }
     this.server = http.createServer((request, response) => { void this.handleHttp(request, response); });
     this.ws = new WebSocketServer({ noServer: true, maxPayload: 8 * 1024 * 1024 });
+    this.heartbeat = setInterval(() => {
+      for (const client of this.ws?.clients || []) {
+        if ((client.missedPongs || 0) >= 2) { client.terminate?.(); continue; }
+        client.missedPongs = (client.missedPongs || 0) + 1;
+        try { client.ping?.(); } catch { /* the socket is already gone */ }
+      }
+    }, this.heartbeatMs);
+    this.heartbeat.unref?.();
     this.server.on("upgrade", (request, socket, head) => this.handleUpgrade(request, socket, head));
     const listen = requested => new Promise((resolve, reject) => {
       const onError = error => { this.server.off("listening", onListening); reject(error); };
@@ -547,6 +559,9 @@ export class BrowserBridge extends EventEmitter {
   }
 
   acceptExtension(ws) {
+    // No pong for two rounds means the worker is gone even if TCP has not noticed.
+    ws.missedPongs = 0;
+    ws.on("pong", () => { ws.missedPongs = 0; });
     let profile;
     ws.on("error", () => {});
     ws.on("message", raw => {
@@ -809,6 +824,8 @@ export class BrowserBridge extends EventEmitter {
   }
 
   async close() {
+    clearInterval(this.heartbeat);
+    this.heartbeat = undefined;
     for (const relay of [...this.relays.values()]) this.dropRelay(relay);
     await Promise.all(this.detachments.values());
     for (const client of this.ws?.clients || []) client.close();

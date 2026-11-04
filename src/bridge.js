@@ -3,7 +3,7 @@ import https from "node:https";
 import { X509Certificate } from "node:crypto";
 import { EventEmitter } from "node:events";
 import { randomUUID, randomBytes, timingSafeEqual } from "node:crypto";
-import { readFile, writeFile, mkdir } from "node:fs/promises";
+import { readFile, writeFile, mkdir, rename } from "node:fs/promises";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 import { WebSocketServer, WebSocket } from "ws";
@@ -43,6 +43,11 @@ export class BrowserBridge extends EventEmitter {
     diagnostics = new Diagnostics(), heartbeatMs = 20000 } = {}) {
     super();
     this.home = home;
+    // Every live extension socket, so the setup page and a machine-readable snapshot can
+    // answer "how many browsers are actually connected right now".
+    this.connections = new Set();
+    this.connectionsFile = home ? path.join(home, "connections.json") : undefined;
+    this.connectionWrites = Promise.resolve();
     this.port = port;
     this.bind = String(bind || "127.0.0.1");
     this.hosts = (Array.isArray(hosts) ? hosts : []).map(entry => String(entry).trim().toLowerCase()).filter(Boolean);
@@ -290,7 +295,13 @@ export class BrowserBridge extends EventEmitter {
     if (pathname === "/extension") {
       const protocols = (request.headers["sec-websocket-protocol"] || "").split(",").map(s => s.trim());
       if (!this.trustedOrigin(request.headers.origin)) return socket.destroy();
-      if (sameSecret(protocols[1], this.settings.token)) this.ws.handleUpgrade(request, socket, head, ws => this.acceptExtension(ws));
+      if (sameSecret(protocols[1], this.settings.token)) this.ws.handleUpgrade(request, socket, head, ws => {
+      // Diagnostic identity: two entries with the same UA and profile mean one browser is
+      // opening several sockets; differing UAs mean several browsers or installs.
+      ws.upgrade = { remote: `${socket.remoteAddress || "?"}:${socket.remotePort || 0}`,
+        ua: String(request.headers["user-agent"] || "").slice(0, 300) };
+      this.acceptExtension(ws);
+    });
       else if (protocols[1] === undefined && BrowserBridge.loopback(request) && request.headers.origin === `chrome-extension://${this.id}`) {
         this.ws.handleUpgrade(request, socket, head, ws => this.acceptPairing(ws));
       } else socket.destroy();
@@ -500,6 +511,7 @@ export class BrowserBridge extends EventEmitter {
     const body = `<main><header><div class="mark">↗</div><div><p class="eyebrow">DSH / BROWSER</p><h1>连接你的浏览器</h1></div><span class="badge ${connected ? "online" : ""}">${connected ? "已连接" : pending.length ? "待确认" : "等待连接"}</span></header>
       <p class="intro">让聊天接着你的网页工作。保留登录状态，在对话中用 @ 选择页面。</p>
       ${this.tlsActive ? this.certificateNotice() : ""}
+      ${this.connectionsSection()}
       ${connected ? `<section class="success"><h2>连接已就绪</h2><p>回到 DSH，在输入框键入 <kbd>@</kbd>，选择需要使用的标签页。</p><p class="hint">已连接 ${this.profiles.size} 个浏览器配置。需要标注页面时，打开扩展并点击「批注当前页面」。</p></section><details><summary>连接另一个浏览器</summary>${install}</details>` : `<section class="card">${pending.length ? `<details><summary>扩展已发来请求 · 查看安装步骤</summary>${install}</details>` : install}</section>`}
       ${!connected || requests ? `<section class="card step"><span class="number">2</span><div><h2>输入验证码，确认连接</h2><p>扩展图标上的 4 位数字就是配对码，输入后点击允许。</p>${requests || `<div class="waiting"><span class="dot"></span>等待扩展发来请求…</div><p class="hint">加载扩展后配对请求会自动出现。</p>`}</div></section>` : ""}
       <details class="help"><summary>连接帮助、本地 HTML 与远程浏览器</summary><p>浏览器限制网页直接打开扩展管理页，请复制地址后粘贴到地址栏。</p><p>如果扩展显示 OFF，请打开扩展弹窗，检查连接开关，并在「连接设置」将端口设为 <code>${this.port}</code>。</p><p>本地 HTML：在扩展详情中开启「允许访问文件网址」，再用 @ 选择已打开的文件标签页。</p><p>远程浏览器：在「应用管理」页复制配对令牌，填到另一台电脑扩展的「连接设置」里（协议 ws 或 wss、主机、端口一致）。远程浏览器只能使用令牌连接，不能在本页配对。</p><p>扩展只连接 DSH 指定的地址，不读取 Cookie；只有在对话中引用的页面才允许操作。</p></details>
@@ -564,6 +576,13 @@ export class BrowserBridge extends EventEmitter {
   acceptExtension(ws) {
     // Any message from the extension resets the idle clock; the sweeper reaps silence.
     ws.lastSeen = Date.now();
+    ws.connectedAt = Date.now();
+    ws.remote = ws.upgrade?.remote || "";
+    ws.ua = ws.upgrade?.ua || "";
+    ws.tabCount = 0;
+    this.connections.add(ws);
+    ws.on("close", () => { this.connections.delete(ws); this.publishConnections(); });
+    this.publishConnections();
     let profile;
     ws.on("error", () => {});
     ws.on("message", raw => {
@@ -603,6 +622,9 @@ export class BrowserBridge extends EventEmitter {
               favicon: typeof tab.favicon === "string" && tab.favicon.length <= 12000
                 && /^data:image\/png;base64,[a-zA-Z0-9+/=]+$/.test(tab.favicon) ? tab.favicon : undefined,
             }]));
+          ws.sourceProfile = profile;
+          ws.tabCount = profile.tabs.size;
+          this.publishConnections();
           for (const relay of [...this.relays.values()]) {
             if (relay.profile === profile && !profile.tabs.has(relay.tabId)) void this.dropRelay(relay);
           }
@@ -829,9 +851,59 @@ export class BrowserBridge extends EventEmitter {
     await this.request(profile, "dsh.focus", [tabId]);
   }
 
+  /** A readable summary of every live extension connection. */
+  describeConnections() {
+    const now = Date.now();
+    return [...this.connections]
+      .sort((a, b) => (a.connectedAt || 0) - (b.connectedAt || 0))
+      .map(socket => {
+        const known = socket.sourceProfile;
+        return {
+          browser: known?.browser || (socket.ua.includes("Edg/") ? "Edge" : socket.ua.includes("Chrome/") ? "Chrome" : "unknown"),
+          version: socket.ua.match(/Edg\/([0-9.]+)/)?.[1] || socket.ua.match(/Chrome\/([0-9.]+)/)?.[1] || "",
+          profile: known?.sourceId ? known.sourceId.slice(0, 8) : "",
+          session: known?.sessionId ? known.sessionId.slice(0, 8) : "",
+          tabs: socket.tabCount || 0,
+          connectedSeconds: Math.round((now - (socket.connectedAt || now)) / 1000),
+          idleSeconds: Math.round((now - (socket.lastSeen || socket.connectedAt || now)) / 1000),
+          remote: socket.remote || "",
+        };
+      });
+  }
+
+  /** Persist that summary so it can be inspected without the per-start management secret. */
+  publishConnections() {
+    if (!this.connectionsFile || this.closing) return;
+    const payload = `${JSON.stringify({ updated: new Date().toISOString(), connections: this.describeConnections() }, null, 2)}\n`;
+    this.connectionWrites = this.connectionWrites.then(async () => {
+      const temporary = `${this.connectionsFile}.${process.pid}.tmp`;
+      try {
+        await mkdir(path.dirname(this.connectionsFile), { recursive: true });
+        await writeFile(temporary, payload, { mode: 0o600 });
+        await rename(temporary, this.connectionsFile);
+      } catch { /* diagnostics only: never fail a connection over a snapshot */ }
+    });
+    return this.connectionWrites;
+  }
+
+  /** The connected-browser table shown on the setup page. */
+  connectionsSection() {
+    const rows = this.describeConnections();
+    if (!rows.length) return "";
+    const cells = rows.map((row, index) => `<tr><td>${index + 1}</td><td>${escapeHtml(row.browser)}${row.version ? ` ${escapeHtml(row.version)}` : ""}</td>
+      <td><code>${escapeHtml(row.profile || "?")}</code></td><td>${row.tabs}</td><td>${row.connectedSeconds}s</td><td>${row.idleSeconds}s</td><td>${escapeHtml(row.remote)}</td></tr>`).join("");
+    return `<section class="card"><h2>已连接的浏览器（${rows.length}）</h2>
+      <table style="width:100%;border-collapse:collapse;font-size:13px"><thead><tr><th>#</th><th>浏览器</th><th>配置</th><th>标签</th><th>连接时长</th><th>静默</th><th>来源</th></tr></thead><tbody>${cells}</tbody></table>
+      ${rows.length > 1 ? `<p class="hint">多条记录说明装了好几份扩展，或者一个配置开了多个浏览器实例。</p>` : ""}</section>`;
+  }
+
   async close() {
     clearInterval(this.heartbeat);
     this.heartbeat = undefined;
+    // Stop writing snapshots, then let any in-flight write land so the caller can
+    // remove the data directory without racing us.
+    this.closing = true;
+    await this.connectionWrites.catch(() => {});
     for (const relay of [...this.relays.values()]) this.dropRelay(relay);
     await Promise.all(this.detachments.values());
     for (const client of this.ws?.clients || []) client.close();

@@ -14,7 +14,9 @@ export function appendAnnotationDraft(conversation, request) {
     if (ids.length && !shell.actions.addAttachments(ids)) return false;
     // Reference chips occupy one detect-coordinate character, even when their clipboard text is long.
     const end = shell.projection.detectText.length;
-    const wrapped = `<doyourweb_annotation>\n${text}\n</doyourweb_annotation>`;
+    // No wrapper tag: this DSH renders an unknown <tag> block as an opaque context node
+    // in monospace, which also blocks the @"path" inside it from becoming a file reference.
+    const wrapped = text;
     const span = { start: end, end, draftRev: state.draftRev };
     const inserted = shell.insertReference
       ? shell.insertReference({ source: "doyourweb-context", ref: wrapped, label: "页面批注", appearance: "file", clipboardText: wrapped }, span)

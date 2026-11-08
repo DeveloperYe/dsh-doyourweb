@@ -59,7 +59,8 @@ test("the reference-chip path needs no persistDraft (DSH InputActions has none)"
   const conversation = { input: { shell: () => shell }, createDrafts() { return []; }, releaseDraftAttachment() {} };
   assert.equal(appendAnnotationDraft(conversation, { sessionId: "s", content: [{ type: "text", text: "Fix the title" }] }), true);
   assert.equal(chips.length, 1);
-  assert.match(chips[0], /^<doyourweb_annotation>\nFix the title\n<\/doyourweb_annotation>$/);
+  // No wrapper tag any more: this DSH would render it as an opaque context node.
+  assert.equal(chips[0], "Fix the title");
 });
 
 test("a refused chip insert reports false so the caller can retry or fail loudly", () => {

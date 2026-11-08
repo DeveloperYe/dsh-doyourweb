@@ -17,6 +17,8 @@ English | [简体中文](README.zh-CN.md)
 
 *The local pairing page connects your browser extension to the DSH plugin.*
 
+> ⚠️ This fork shares the plugin id `browser-tabs` with upstream `SheepofSheep/dsh-doyourweb`, so **do not install both in the same DSH profile** — the second one replaces the first one's config.
+>
 > **This fork** ([DeveloperYe/dsh-doyourweb-remote](https://github.com/DeveloperYe/dsh-doyourweb-remote)) adds remote browsers and hardens the local management surface. Another machine's Chrome/Edge can drive the tabs it already has; see [docs/remote-browser.md](docs/remote-browser.md).
 
 ---

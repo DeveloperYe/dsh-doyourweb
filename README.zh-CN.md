@@ -19,6 +19,8 @@
 
 *本地配对页面：将浏览器扩展连接到 DSH 插件，保留现有标签页和登录状态。*
 
+> ⚠️ 本 fork 与上游 `SheepofSheep/dsh-doyourweb` **共用同一个插件 id（`browser-tabs`）**，同一个 DSH profile 里**不能同时安装**——后装的会顶掉先装的配置。
+>
 > **本 fork**（[DeveloperYe/dsh-doyourweb-remote](https://github.com/DeveloperYe/dsh-doyourweb-remote)）新增远程浏览器支持，并收紧了本机管理面：另一台电脑上的 Chrome/Edge 也能接入。见 [docs/remote-browser.md](docs/remote-browser.md)。
 
 ---

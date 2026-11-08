@@ -1,6 +1,6 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
-import { CONTEXT_PREFIX, CONTEXT_SUFFIX, tabCapacity, stripInjectedContext } from "../src/context-inject.js";
+import { CONTEXT_PREFIX, CONTEXT_SUFFIX, injectionBudget, tabCapacity, stripInjectedContext } from "../src/context-inject.js";
 
 test("a budget that cannot hold one tab reports zero instead of emitting an empty payload", () => {
   // The header alone is ~340 characters, so a 600-character budget leaves nothing.
@@ -11,7 +11,14 @@ test("a budget that cannot hold one tab reports zero instead of emitting an empt
   assert.equal(tabCapacity(1600), 2);
   assert.equal(tabCapacity(2400), 4, "the default fits four tabs");
   assert.equal(tabCapacity(8000), 18, "the maximum is capped by the caller at four, not here");
-  assert.equal(tabCapacity(undefined), 4, "no budget means the default");
+  // Unset is now "authorise only": a fresh install must not paste page text into the chat.
+  assert.equal(tabCapacity(undefined), 0, "no budget means no injection");
+  assert.equal(injectionBudget(undefined), 0);
+  assert.equal(injectionBudget(null), 0);
+  assert.equal(injectionBudget(""), 0);
+  assert.equal(injectionBudget(0), 0);
+  assert.equal(injectionBudget(120), 400, "a small positive value is raised to the floor");
+  assert.equal(injectionBudget(99999), 8000, "and a huge one is capped");
   assert.equal(tabCapacity(0), 0, "zero disables the injection on purpose");
   assert.equal(tabCapacity(-5), 0);
 });

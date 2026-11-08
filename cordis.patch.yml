@@ -13,7 +13,8 @@
       name: dsh-doyourweb-remote
       config:
         port: 43187
-        snapshotChars: 2400
+        # 0 = 只授权不预读：@ 只授予标签页访问权，正文由模型按需 browser_read
+        snapshotChars: 0
         idleTimeoutMs: 120000
         bind: 127.0.0.1
         hosts: []

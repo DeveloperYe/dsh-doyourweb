@@ -1,5 +1,24 @@
 # 更新记录
 
+## 0.9.6 · 2026-11-09
+
+面向"别人装上去"的通用化：**默认不再往聊天里塞页面正文**，配置错误也不再静默。
+
+- **`snapshotChars` 默认值 2400 → 0**：`@` 一个页面只授予访问权，正文由模型按需
+  `browser_read`。原来新装用户每 `@` 一次就会看到约 1.6 KB 的 `<browser_context>` 原文
+  （这版 DSH 又不能折叠），是"一大串"的根源。想预读就显式给 ≥400。
+- **读取大小与注入预算解耦**：新增 `readChars`（默认 2400）控制 `browser_read` 每页字符数。
+  此前把 `snapshotChars` 设为 0 会连带把每页读取压到 400 字符的下限。
+- **新增启动配置自检** `src/config-check.js`：插件没有 config schema，很多错误是静默失败的
+  （`publicUrl` 解析失败被直接忽略、远程没开 TLS 就是连不上）。现在启动时逐条打印，带稳定错误码：
+  `remote-required`（非回环 bind 没开 remote，直接终止）、`plaintext-remote`、`public-url-invalid`、
+  `public-https-without-tls`、`extension-port-mismatch`、`hosts-missing-public`、`hosts-with-port`、
+  `injection-budget-too-small` / `-capped` / `-invalid`、`tls-port-fallback`。
+- 自带 `cordis.patch.yml` 模板与两版 README 的配置表同步更新。
+
+测试：新增 `test/config-check.test.mjs` 12 条（含"线上推荐配置必须零告警"回归），
+新增 host 场景「默认配置只授权、不注入页面文本」，夹具按场景显式给预算。
+
 ## 0.9.5 · 2026-11-09
 
 修掉一个**能把整个 DSH 打死**的崩溃：打开连接页 `/setup` 时，如果 TLS 生效（远程部署都是），

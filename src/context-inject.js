@@ -16,11 +16,24 @@ export const PER_TAB_MIN = 400;
 /** Room reserved for the JSON wrapper and its braces around each tab entry. */
 const WRAPPER_SLACK = 64;
 
+/**
+ * The reference-injection budget. Unset means "authorise only": the reference still grants
+ * the tab, and the model reads the page on demand. A positive number is clamped to the
+ * range the payload can actually use.
+ */
+export function injectionBudget(value) {
+  if (value === undefined || value === null || value === "") return 0;
+  const size = Number(value);
+  if (!Number.isFinite(size) || size <= 0) return 0;
+  return Math.max(400, Math.min(8000, size));
+}
+
 /** How many tabs actually fit in `budget` once the boilerplate is paid for. */
 export function tabCapacity(budget) {
-  // 0 (or negative) is the explicit "do not inject anything" setting, not a typo to fix.
-  const raw = budget === undefined || budget === null || budget === "" ? 2400 : Number(budget);
-  const size = Number.isFinite(raw) ? raw : 2400;
+  // Unset means "authorise only": the reference still grants the tab, the model reads it on
+  // demand. 0 and negatives mean the same thing; a positive number is a real budget.
+  const raw = budget === undefined || budget === null || budget === "" ? 0 : Number(budget);
+  const size = Number.isFinite(raw) ? raw : 0;
   if (size <= 0) return 0;
   const usable = size - CONTEXT_PREFIX.length - CONTEXT_SUFFIX.length - WRAPPER_SLACK;
   return Math.max(0, Math.floor(usable / PER_TAB_MIN));

@@ -218,7 +218,8 @@ Defaults are declared in [cordis.patch.yml](cordis.patch.yml):
 | Setting | Default | Purpose |
 | --- | --- | --- |
 | `port` | `43187` | Local bridge port |
-| `snapshotChars` | `2400` | Page-read and reference-context budget; set the reference injection to `0` to disable it (authorize only, read with `browser_read`) |
+| `snapshotChars` | `0` | Budget for the reference-injection block. **`0` (default) authorises the tab without pre-reading it**, which is what you want: the model calls `browser_read` when it needs the page. A value ≥`400` pastes a snapshot into the message; a budget too small for one tab injects nothing |
+| `readChars` | `2400` | Characters per `browser_read` page; independent of the setting above, so disabling injection keeps full-size reads |
 | `idleTimeoutMs` | `120000` | Idle time before releasing the debugger connection |
 | `bind` | `127.0.0.1` | Listen address; use `0.0.0.0` or a LAN address for remote access |
 | `remote` | `false` | Must be `true` before a non-loopback bind is accepted |

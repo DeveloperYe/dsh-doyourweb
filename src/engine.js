@@ -84,9 +84,12 @@ function boundAction(result) {
 }
 
 export class BrowserEngine {
-  constructor(bridge, { snapshotChars = 2400, artifactDir } = {}) {
+  constructor(bridge, { readChars = 2400, artifactDir } = {}) {
     this.bridge = bridge;
-    this.snapshotChars = snapshotChars;
+    // Page size for browser_read, independent of the reference-injection budget: setting
+    // snapshotChars to 0 used to shrink every read to the 400-character floor as well.
+    this.readChars = readChars;
+    this.snapshotChars = readChars;
     this.artifactDir = artifactDir;
     this.states = new Map();
     this.queues = new Map();
@@ -151,7 +154,7 @@ export class BrowserEngine {
   async read(ref, options = {}, signal) {
     return this.serial(ref, () => this.withPage(ref, async page => {
       checkpoint(signal);
-      const limit = Math.max(400, Math.min(8000, options.limit || this.snapshotChars));
+      const limit = Math.max(400, Math.min(8000, options.limit || this.readChars));
       if (options.cursor) {
         const [id, offset] = options.cursor.split(":");
         const state = this.states.get(ref);

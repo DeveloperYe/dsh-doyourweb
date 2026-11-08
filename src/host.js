@@ -16,7 +16,8 @@ import { typingSchema } from "./apps/typing.js";
 import { windowsWorker } from "./apps/powershell.js";
 import { balanceFileReferences } from "./file-references.js";
 import { Diagnostics } from "./diagnostics.js";
-import { CONTEXT_PREFIX as contextPrefix, CONTEXT_SUFFIX as contextSuffix, stripInjectedContext, tabCapacity } from "./context-inject.js";
+import { checkConfig, describeProblems } from "./config-check.js";
+import { CONTEXT_PREFIX as contextPrefix, CONTEXT_SUFFIX as contextSuffix, injectionBudget, stripInjectedContext, tabCapacity } from "./context-inject.js";
 
 export const name = PACKAGE;
 export const inject = ["tools", "typert"];
@@ -86,6 +87,15 @@ export async function apply(ctx, config = {}) {
   });
   const home = path.join(config.home || process.env.DSH_HOME || path.join(os.homedir(), ".dsh"), "browser-tabs");
   const version = JSON.parse(await readFile(new URL("../package.json", import.meta.url), "utf8")).version;
+  // Config mistakes used to fail silently (an unparseable publicUrl is skipped, a remote
+  // deployment without TLS never connects), so every finding is reported once, by code.
+  const configProblems = checkConfig(config);
+  const startLogger = ctx.logger?.(PACKAGE);
+  for (const line of describeProblems(configProblems)) startLogger?.warn(`${PACKAGE}: ${line}`);
+  const configErrors = configProblems.filter(problem => problem.level === "error");
+  if (configErrors.length) {
+    throw new Error(`${PACKAGE}: ${configErrors.map(problem => problem.message).join("；")}`);
+  }
   const bridge = new BrowserBridge({ home, port: config.port ?? 43187, idleTimeoutMs: config.idleTimeoutMs || 120000,
     bind: config.bind || "127.0.0.1", hosts: config.hosts || [], remote: config.remote === true,
     extensionScheme: config.extensionScheme || "ws", extensionPort: config.extensionPort,
@@ -100,7 +110,9 @@ export async function apply(ctx, config = {}) {
     if (bridge.portFallbackUsed) logger?.warn(`${PACKAGE}: port ${config.port ?? 43187} was busy, listening on ${bridge.port} instead (the generated extension uses that port)`);
     return () => bridge.close();
   }, `${PACKAGE}: bridge`);
-  const engine = new BrowserEngine(bridge, { snapshotChars: config.snapshotChars || 2400, artifactDir: path.join(home, "captures") });
+  // readChars sizes browser_read pages; snapshotChars only governs the reference injection,
+  // so a reader who turns injection off still gets full-size reads.
+  const engine = new BrowserEngine(bridge, { readChars: config.readChars ?? (config.snapshotChars > 0 ? config.snapshotChars : 2400), artifactDir: path.join(home, "captures") });
   ctx.effect(() => () => engine.close(), `${PACKAGE}: snapshots`);
   const webmcp = new WebMCP(engine);
   ctx.effect(() => () => webmcp.close(), `${PACKAGE}: webmcp`);
@@ -360,8 +372,7 @@ export async function apply(ctx, config = {}) {
       if (!entry?.refs.length) { messages.push(outgoing); continue; }
       // Nothing fits next to the boilerplate: leave the reference alone instead of
       // spending the budget on an empty payload.
-      const configured = Number(config.snapshotChars);
-      const guardBudget = configured === 0 ? 0 : Math.max(400, Math.min(8000, configured || 2400));
+      const guardBudget = injectionBudget(config.snapshotChars);
       if (tabCapacity(guardBudget) < 1) {
         messages.push(outgoing);
         continue;
@@ -372,8 +383,7 @@ export async function apply(ctx, config = {}) {
         const tabs = [];
         // snapshotChars: 0 switches the injection off entirely: the reference still
         // authorises the tab, the model just reads it on demand instead.
-        const configured = Number(config.snapshotChars);
-        const budget = configured === 0 ? 0 : Math.max(400, Math.min(8000, configured || 2400));
+        const budget = injectionBudget(config.snapshotChars);
         const capacity = budget - contextPrefix.length - contextSuffix.length - 64;
         const count = Math.min(entry.refs.length, 4, tabCapacity(budget));
         const payload = () => ({ tabs, ...(entry.refs.length > count ? { omittedTabs: entry.refs.length - count } : {}) });

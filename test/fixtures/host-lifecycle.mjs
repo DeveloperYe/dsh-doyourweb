@@ -28,8 +28,11 @@ try {
   const probe = await openPort();
   const port = probe.address().port;
   await closePort(probe);
+  // Reference injection now defaults to 0 (authorise only), so the scenarios that exercise
+  // the budget have to ask for one explicitly.
+  const injectsContext = ["budget", "routing"].includes(process.argv[3]);
   const plugin = { name: "browser-tabs-test", inject: ["tools", "typert"],
-    apply: ctx => apply(ctx, { home: process.argv[2], port }) };
+    apply: ctx => apply(ctx, { home: process.argv[2], port, snapshotChars: injectsContext ? 2400 : undefined }) };
   if (process.argv[3] === "budget") {
     WebMCP.prototype.list = async () => ({ supported: false, tools: [] });
     const reads = [];
@@ -114,6 +117,28 @@ try {
     await assert.rejects(act.execute({ snapshot: "current", steps: [{ op: "drag", selector: "#start" }] }, { agent }), /requires toRef/);
     await assert.rejects(tools.get("browser_network_requests").execute({ action: "start" }, { agent: { session: { id: "other" } } }), /No browser tab is authorized/);
     await fiber.dispose(); console.log("PASS: uploads require a selected tab and exact user-supplied file paths.");
+  } else if (process.argv[3] === "default-injection") {
+    // Default config: the reference authorises the tab and nothing is pasted into the chat.
+    // No WebMCP here, so browser_read goes straight to the stubbed engine instead of a real page.
+    WebMCP.prototype.list = async () => ({ supported: false, tools: [] });
+    const fiber = root.plugin(plugin);
+    await fiber.await();
+    const agent = { session: { id: "default-session" } };
+    const user = { id: "default-message", source: { kind: "user" }, content: [{ type: "text",
+      text: "@[Tab](dsh-browser://runtime/1) 看一下这个页面" }] };
+    const decision = await root.waterfall("agent/pre-step", { agent },
+      () => Promise.resolve({ kind: "enter", messages: [user] }));
+    const content = decision.messages[0].content;
+    assert.equal(content.length, 1, "nothing is appended when snapshotChars is unset");
+    assert.equal(content[0].text.includes("<browser_context>"), false, "no page text in the message");
+    assert.equal(content[0].text.includes("browser_webmcp_call"), false, "no injected instructions either");
+    // The reference still authorises the tab, so the tools work without any injection.
+    BrowserBridge.prototype.resolve = ref => ({ tab: { ref } });
+    BrowserEngine.prototype.read = async ref => ({ tab: ref, content: "Page text" });
+    const read = await tools.get("browser_read").execute({}, { agent });
+    assert.equal(read.content, "Page text", "reading works on demand");
+    await fiber.dispose();
+    console.log("PASS: the default config authorises references without pasting page text.");
   } else if (process.argv[3] === "grants") {
     // DSH claims one input batch per step, so only the step that carries the user
     // message sees the citation; every later step must keep the grant.

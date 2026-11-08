@@ -6,7 +6,7 @@
 
 `0.1.6` 改善桌面输入、快照句柄与连接界面，新增 `app_type` 打字和快捷键。支持页面元素批注和 `@` Windows 应用。批注先加入聊天草稿，可积累多条后按 Enter 发送；应用控制先查匹配的 MCP，已安装的本地 MCP 直接连接，缺少时询问安装；未发现 MCP 时使用 computer use。新提出的配置、远程端点和桌面驱动首次连接仍需确认，详见[批注与应用控制](docs/annotations-and-apps.md)。
 
-[![CI](https://img.shields.io/github/actions/workflow/status/DeveloperYe/dsh-doyourweb/ci.yml?branch=main&label=CI)](https://github.com/SheepofSheep/dsh-doyourweb/actions/workflows/ci.yml)
+[![CI](https://img.shields.io/github/actions/workflow/status/DeveloperYe/dsh-doyourweb-remote/ci.yml?branch=main&label=CI)](https://github.com/SheepofSheep/dsh-doyourweb/actions/workflows/ci.yml)
 [![License](https://img.shields.io/badge/license-MIT-green)](LICENSE)
 [![Node.js](https://img.shields.io/badge/Node.js-%3E%3D22-339933)](package.json)
 [![Playwright](https://img.shields.io/badge/Playwright-1.64.0-2EAD33)](package.json)
@@ -19,7 +19,7 @@
 
 *本地配对页面：将浏览器扩展连接到 DSH 插件，保留现有标签页和登录状态。*
 
-> **本 fork**（[DeveloperYe/dsh-doyourweb](https://github.com/DeveloperYe/dsh-doyourweb)）新增远程浏览器支持，并收紧了本机管理面：另一台电脑上的 Chrome/Edge 也能接入。见 [docs/remote-browser.md](docs/remote-browser.md)。
+> **本 fork**（[DeveloperYe/dsh-doyourweb-remote](https://github.com/DeveloperYe/dsh-doyourweb-remote)）新增远程浏览器支持，并收紧了本机管理面：另一台电脑上的 Chrome/Edge 也能接入。见 [docs/remote-browser.md](docs/remote-browser.md)。
 
 ---
 
@@ -143,7 +143,7 @@ dsh-doyourweb-remote
 ### 构建并安装本地版本
 
 ```sh
-git clone https://github.com/DeveloperYe/dsh-doyourweb.git
+git clone https://github.com/DeveloperYe/dsh-doyourweb-remote.git
 cd dsh-doyourweb
 npm ci
 npm run build

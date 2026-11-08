@@ -342,7 +342,7 @@ cookie 仅在 TLS 加 `Secure`；失败限流（前 10 次仍是 404 不可区�
     `dsh-doyourweb-remote#browserTabs/*`，host 与 client 同源，自动一致）、
     `package.json`、`cordis.patch.yml`、下载物文件名（`dsh-doyourweb-remote-ca.crt`、
     `dsh-doyourweb-remote-<key>.zip`）、日志前缀。
-  - **不变**：GitHub 仓库名 `DeveloperYe/dsh-doyourweb`、扩展显示名「DSH DoYourWeb」、
+  - **不变**：GitHub 仓库名 `DeveloperYe/dsh-doyourweb-remote`、扩展显示名「DSH DoYourWeb」、
     数据目录 `~/.dsh/browser-tabs`（配对令牌与自签 CA 因此不受影响，无需重新配对或重装证书）。
 
 ## 0.3.3 · 2026-10-31（DeveloperYe fork）

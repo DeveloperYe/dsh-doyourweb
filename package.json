@@ -6,11 +6,11 @@
   "license": "MIT",
   "repository": {
     "type": "git",
-    "url": "git+https://github.com/DeveloperYe/dsh-doyourweb.git"
+    "url": "git+https://github.com/DeveloperYe/dsh-doyourweb-remote.git"
   },
-  "homepage": "https://github.com/DeveloperYe/dsh-doyourweb#readme",
+  "homepage": "https://github.com/DeveloperYe/dsh-doyourweb-remote#readme",
   "bugs": {
-    "url": "https://github.com/DeveloperYe/dsh-doyourweb/issues"
+    "url": "https://github.com/DeveloperYe/dsh-doyourweb-remote/issues"
   },
   "publishConfig": {
     "access": "public",

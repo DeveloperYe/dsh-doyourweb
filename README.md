@@ -4,7 +4,7 @@ Reference and control your existing, logged-in Chrome and Edge tabs from DeepSee
 
 Version `0.1.6` improves desktop snapshots, input diagnostics and connection UI, and adds `app_type` for text plus key chords. It supports draggable element annotations collected in the chat draft and `@` references to running Windows apps. App control discovers matching MCPs first. Installed local MCPs connect directly; installation requests approval. With no matching MCP, use computer use. Windows are shown when possible while background execution remains available. See [annotations and app control](docs/annotations-and-apps.md#english).
 
-[![CI](https://img.shields.io/github/actions/workflow/status/DeveloperYe/dsh-doyourweb/ci.yml?branch=main&label=CI)](https://github.com/SheepofSheep/dsh-doyourweb/actions/workflows/ci.yml)
+[![CI](https://img.shields.io/github/actions/workflow/status/DeveloperYe/dsh-doyourweb-remote/ci.yml?branch=main&label=CI)](https://github.com/SheepofSheep/dsh-doyourweb/actions/workflows/ci.yml)
 [![License](https://img.shields.io/badge/license-MIT-green)](LICENSE)
 [![Node.js](https://img.shields.io/badge/Node.js-%3E%3D22-339933)](package.json)
 [![Playwright](https://img.shields.io/badge/Playwright-1.64.0-2EAD33)](package.json)
@@ -17,7 +17,7 @@ English | [简体中文](README.zh-CN.md)
 
 *The local pairing page connects your browser extension to the DSH plugin.*
 
-> **This fork** ([DeveloperYe/dsh-doyourweb](https://github.com/DeveloperYe/dsh-doyourweb)) adds remote browsers and hardens the local management surface. Another machine's Chrome/Edge can drive the tabs it already has; see [docs/remote-browser.md](docs/remote-browser.md).
+> **This fork** ([DeveloperYe/dsh-doyourweb-remote](https://github.com/DeveloperYe/dsh-doyourweb-remote)) adds remote browsers and hardens the local management surface. Another machine's Chrome/Edge can drive the tabs it already has; see [docs/remote-browser.md](docs/remote-browser.md).
 
 ---
 
@@ -163,7 +163,7 @@ This requires a published package. If the registry returns `404`, use the local 
 ### Build and Install Locally
 
 ```sh
-git clone https://github.com/DeveloperYe/dsh-doyourweb.git
+git clone https://github.com/DeveloperYe/dsh-doyourweb-remote.git
 cd dsh-doyourweb
 npm ci
 npm run build

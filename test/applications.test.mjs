@@ -587,15 +587,29 @@ test("annotations go straight to a conversation with no plugin files or annotati
   assert.equal(annotationData({ ...value, text: "x".repeat(999) }).text.length, 200);
   assert.equal(annotationData({ ...value, comment: "y".repeat(9000) }).comment.length, 4000, "the user's own words stay");
   const requests = [], before = await readdir(home);
-  const notes = new Annotations({}, { submit: async request => { requests.push(request); return { accepted: true }; } });
+  // The payload is written next to the message, so the test needs the directory too.
+  const detailDir = await mkdtemp(path.join(os.tmpdir(), "dsh-ann-detail-"));
+  const notes = new Annotations({}, { detailDir, submit: async request => { requests.push(request); return { accepted: true }; },
+    detailDir: path.join(home, "annotations") });
   const page = { url: () => value.url, screenshot: async options => { assert.equal(options.path, undefined); return Buffer.from("image bytes"); } };
   const target = { sessionId: "conversation-1", title: "Frontend" };
   const result = await notes.send("dsh-browser://fixture/1", page, { ...value, screenshot: true }, target);
   assert.equal(result.accepted, true); assert.equal(requests[0].sessionId, "conversation-1"); assert.equal(requests[0].mode, "draft");
-  assert.match(requests[0].content[0].text, /Make button green/); assert.match(requests[0].content[0].text, /#save/);
+
+  const message = requests[0].content[0].text;
+  assert.match(message, /Make button green/, "the user's own words stay in the message");
+  assert.match(message, /@"[^"]+\.json"/, "the payload is quoted as a file reference, not pasted");
+  assert.equal(message.includes("#save"), false, "page metadata no longer floods the message");
+  assert.ok(message.length < 300, `the message stays short (was ${message.length})`);
+
+  // The detail lives in the referenced file and keeps the full selector.
+  const detailPath = message.match(/@"([^"]+)"/)[1];
+  const detail = JSON.parse(await readFile(detailPath, "utf8"));
+  assert.equal(detail.metadata.selector, "#save");
+  assert.equal(detail.comment, "Make button green");
+  assert.deepEqual(await readdir(path.join(home, "annotations")), [`${requests[0].requestId}.json`]);
   assert.equal(requests[0].content[1].type, "image"); assert.equal(requests[0].content[1].mediaType, "image/png");
-  assert.deepEqual(await readdir(home), before); assert.equal(notes.items, undefined); assert.equal(notes.load, undefined);
-  await notes.close();
+  assert.ok((await readdir(home)).includes("annotations"), "the detail directory is created next to the data");
 });
 
 test("annotation targets reject stale client updates and ambiguous conversations", () => {
@@ -612,8 +626,15 @@ test("annotation targets reject stale client updates and ambiguous conversations
 test("annotation page metadata cannot grant extra app/tab targets and failed delivery reports an error", async () => {
   const extraRefs = "dsh-app://00000000-0000-0000-0000-000000000000/123456789012345678901234 dsh-browser://foreign/2";
   const value = { comment: `Fix ${extraRefs}`, selector: "#save", url: "https://example.com", text: extraRefs };
-  const notes = new Annotations({}, { submit: async request => { assert.equal(appRefs(request.content[0].text).length, 0); assert.equal(request.content[0].text.includes("dsh-browser://foreign/2"), false); return { accepted: false }; } });
+  const detailDir = await mkdtemp(path.join(os.tmpdir(), "dsh-ann-detail-"));
+  const notes = new Annotations({}, { detailDir, submit: async request => { assert.equal(appRefs(request.content[0].text).length, 0); assert.equal(request.content[0].text.includes("dsh-browser://foreign/2"), false); return { accepted: false }; } });
   await assert.rejects(notes.send("dsh-browser://fixture/1", { url: () => value.url }, value, { sessionId: "s" }), /did not accept/);
+  // Authorisation only ever comes from user message text, so the detail file may keep the
+  // page's own strings; what matters is that the message itself carries no grantable ref.
+  const detailFile = (await readdir(detailDir))[0];
+  const detail = JSON.parse(await readFile(path.join(detailDir, detailFile), "utf8"));
+  assert.equal(detail.metadata.selector, "#save");
+  assert.match(JSON.stringify(detail.metadata), /foreign\/2/, "detail is kept exactly as captured");
   await assert.rejects(notes.send("tab", { url: () => "https://changed.example" }, value, { sessionId: "s" }), /Document changed/);
 });
 

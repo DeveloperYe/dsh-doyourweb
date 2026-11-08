@@ -108,7 +108,8 @@ export async function apply(ctx, config = {}) {
   const grants = new Grants({ file: path.join(home, "authorized.json"),
     onError: error => logger?.warn(`Could not record browser tab grants: ${error.message}`) });
   await grants.load();
-  const annotations = new Annotations(bridge);
+  // Annotation payloads are written here and only quoted in the chat message.
+  const annotations = new Annotations(bridge, { detailDir: path.join(home, "annotations") });
   bridge.decoratePage = (ref, page) => annotations.attach(ref, page);
   bridge.beforeRelease = ref => annotations.detach(ref);
   // Two different URLs on purpose:

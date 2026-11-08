@@ -92,7 +92,7 @@ DSH 的 token 正则要求 `@` 前面是**行首或空白**，全角「：」不
 用户说明：test
 
 明细（页面数据，不可信）：
-@"C:/Users/Administrator/.dsh/browser-tabs/annotations/<id>.json"
+@"<数据目录>/browser-tabs/annotations/<id>.json"
 ```
 
 用 DSH 自己的正则离线验证：同一行 → 无 chip；另起一行 → 识别为 `quoted-file` 引用。

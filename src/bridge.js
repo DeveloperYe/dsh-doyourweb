@@ -574,6 +574,7 @@ export class BrowserBridge extends EventEmitter {
       <p class="intro">让聊天接着你的网页工作。保留登录状态，在对话中用 @ 选择页面。</p>
       ${this.tlsActive ? this.certificateNotice() : ""}
       ${this.connectionsSection()}
+    ${this.remoteChecklist()}
       ${connected ? `<section class="success"><h2>连接已就绪</h2><p>回到 DSH，在输入框键入 <kbd>@</kbd>，选择需要使用的标签页。</p><p class="hint">已连接 ${this.profiles.size} 个浏览器配置。需要标注页面时，打开扩展并点击「批注当前页面」。</p></section><details><summary>连接另一个浏览器</summary>${install}</details>` : `<section class="card">${pending.length ? `<details><summary>扩展已发来请求 · 查看安装步骤</summary>${install}</details>` : install}</section>`}
       ${!connected || requests ? `<section class="card step"><span class="number">2</span><div><h2>输入验证码，确认连接</h2><p>扩展图标上的 4 位数字就是配对码，输入后点击允许。</p>${requests || `<div class="waiting"><span class="dot"></span>等待扩展发来请求…</div><p class="hint">加载扩展后配对请求会自动出现。</p>`}</div></section>` : ""}
       <details class="help"><summary>连接帮助、本地 HTML 与远程浏览器</summary><p>浏览器限制网页直接打开扩展管理页，请复制地址后粘贴到地址栏。</p><p>如果扩展显示 OFF，请打开扩展弹窗，检查连接开关，并在「连接设置」将端口设为 <code>${this.port}</code>。</p><p>本地 HTML：在扩展详情中开启「允许访问文件网址」，再用 @ 选择已打开的文件标签页。</p><p>远程浏览器：在「应用管理」页复制配对令牌，填到另一台电脑扩展的「连接设置」里（协议 ws 或 wss、主机、端口一致）。远程浏览器只能使用令牌连接，不能在本页配对。</p><p>扩展只连接 DSH 指定的地址，不读取 Cookie；只有在对话中引用的页面才允许操作。</p></details>
@@ -980,6 +981,79 @@ export class BrowserBridge extends EventEmitter {
     return `<section class="card"><h2>已连接的浏览器（${rows.length}）</h2>
       <table style="width:100%;border-collapse:collapse;font-size:13px"><thead><tr><th>#</th><th>浏览器</th><th>配置</th><th>标签</th><th>连接时长</th><th>静默</th><th>来源</th></tr></thead><tbody>${cells}</tbody></table>
       ${rows.length > 1 ? `<p class="hint">多条记录说明装了好几份扩展，或者一个配置开了多个浏览器实例。</p>` : ""}</section>`;
+  }
+
+  /**
+   * The remote-readiness checklist. Every row reports something the operator can act on,
+   * and the last row is the only real proof: a browser actually connected. It exists because
+   * the usual failure mode is "扩展显示离线" with no hint which of the four pieces is wrong.
+   */
+  remoteChecklist() {
+    const rows = [];
+    const row = (ok, label, detail) => rows.push({ ok, label, detail });
+    const publicHost = (() => {
+      if (!this.publicUrl) return undefined;
+      try { return new URL(this.publicUrl.includes("://") ? this.publicUrl : `https://${this.publicUrl}`).hostname.toLowerCase(); }
+      catch { return undefined; }
+    })();
+
+    const loopbackOnly = this.localBind() && !this.publicUrl && !this.tlsActive;
+    if (loopbackOnly) {
+      row(true, "本机模式", "只监听回环，扩展走 ws://127.0.0.1:" + this.port + "；不需要公网地址、证书或端口映射。");
+    } else {
+      // 1. 对外地址
+      if (!this.publicUrl) {
+        row(false, "对外地址", "没有配置 publicUrl：管理页与扩展只能用回环地址 http://127.0.0.1:" + this.port + "，其他电脑访问不到。");
+      } else if (!publicHost) {
+        row(false, "对外地址", "publicUrl " + escapeHtml(String(this.publicUrl)) + " 无法解析，已被忽略。");
+      } else {
+        row(true, "对外地址", escapeHtml(this.publicOrigin()) + "（扩展连这份地址）");
+      }
+
+      // 2. Host 白名单
+      const listed = publicHost && this.hosts.some(entry => (/^(\[[^\]]+\]|[^:]+)/.exec(entry)?.[1] || "").toLowerCase() === publicHost);
+      if (publicHost) {
+        row(!!listed, "Host 白名单", listed
+          ? "已包含 " + escapeHtml(publicHost) + "（当前：" + escapeHtml(this.hosts.join(", ") || "空") + "）"
+          : "缺少 publicUrl 的主机名 " + escapeHtml(publicHost) + "；插件会自动补上，但请在配置里写清楚");
+      } else {
+        row(true, "Host 白名单", escapeHtml(this.hosts.join(", ") || "只有回环"));
+      }
+
+      // 3. TLS 与端口映射
+      if (!this.tlsActive) {
+        row(false, "TLS 与端口映射", "tls 未开启：远程只能用明文的 ws://，建议 tls: true 后重启。");
+      } else {
+        const dialPort = this.extensionPort || this.tlsPort;
+        const publicPort = (() => {
+          try { return new URL(this.publicUrl.includes("://") ? this.publicUrl : `https://${this.publicUrl}`).port; }
+          catch { return ""; }
+        })();
+        const inSync = !this.publicUrl || !publicPort || String(publicPort) === String(dialPort);
+        row(inSync, "TLS 与端口映射", inSync
+          ? "扩展连 " + dialPort + "，本进程监听 " + this.tlsPort + "；NAT 需把外部 " + dialPort + " 映射到这里。"
+          : "publicUrl 的端口 " + publicPort + " 与扩展拨号的 " + dialPort + " 不一致，请确认映射方向。");
+      }
+
+      // 4. 证书
+      const hasCa = !!this.ca?.caDer?.length;
+      row(this.tlsActive ? hasCa : true, "证书信任", this.tlsActive
+        ? (hasCa ? '自签 CA 已生成，被控机装一次即可：<a href="/ca.crt" download>下载 CA 证书</a>' : "CA 尚未生成")
+        : "不需要（没有启用 TLS）");
+    }
+
+    // 5. 唯一的实证：有浏览器连上了
+    const connected = this.profiles.size;
+    row(connected > 0, "实际连通", connected > 0
+      ? "已有 " + connected + " 个浏览器连上，可用。"
+      : "还没有扩展连上。装好扩展后回到本页刷新，这一行应该在 10 秒内变成绿色。");
+
+    const cells = rows.map(item => `<tr><td style="width:1.6em">${item.ok ? "✅" : "⚠️"}</td>
+      <td style="white-space:nowrap">${escapeHtml(item.label)}</td><td>${item.detail}</td></tr>`).join("");
+    const pending = rows.filter(item => !item.ok).length;
+    return `<section class="card"><h2>远程接入自检${pending ? `（${pending} 项待处理）` : "（全部通过）"}</h2>
+      <table style="width:100%;border-collapse:collapse;font-size:13px"><tbody>${cells}</tbody></table>
+      <p class="hint">四项都对上还不够，最后一行"实际连通"才是证据；它一直是 ⚠️ 说明扩展没连到这个地址。</p></section>`;
   }
 
   async close() {

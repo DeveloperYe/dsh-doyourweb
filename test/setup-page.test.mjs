@@ -60,6 +60,56 @@ test("a rendering bug answers 500 and leaves the process running", async t => {
   assert.equal(manage.status, 200);
 });
 
+async function bridgeWith(t, options) {
+  const home = await mkdtemp(path.join(os.tmpdir(), "dsh-checklist-"));
+  const bridge = new BrowserBridge({ home, port: 0, autoBuild: false, ...options });
+  await bridge.start();
+  t.after(async () => { await bridge.close(); await rm(home, { recursive: true, force: true, maxRetries: 10, retryDelay: 50 }); });
+  return bridge;
+}
+
+const checklistRows = body => [...body.matchAll(/<tr><td style="width:1\.6em">(✅|⚠️)<\/td>\s*<td[^>]*>([^<]+)<\/td><td>([\s\S]*?)<\/td><\/tr>/g)]
+  .map(match => ({ mark: match[1], label: match[2], detail: match[3] }));
+
+test("the setup page shows a remote checklist with the certificate link", async t => {
+  const bridge = await bridgeWith(t, {
+    tls: true, tlsPort: 0, extensionPort: 39066, bind: "0.0.0.0", remote: true,
+    publicUrl: "https://203.0.113.10:39066", hosts: ["203.0.113.10"],
+  });
+  const response = await get(`https://127.0.0.1:${bridge.tlsPort}/setup?k=${bridge.manageSecret}`, { insecure: true });
+  assert.equal(response.status, 200);
+  assert.match(response.body, /远程接入自检/);
+
+  const rows = checklistRows(response.body);
+  const byLabel = label => rows.find(row => row.label === label);
+  assert.equal(byLabel("对外地址").mark, "✅");
+  assert.equal(byLabel("Host 白名单").mark, "✅");
+  assert.match(byLabel("TLS 与端口映射").detail, /39066/);
+  assert.equal(byLabel("证书信任").mark, "✅");
+  assert.match(byLabel("证书信任").detail, /ca\.crt/, "the CA download is reachable from the row");
+  // Nothing has connected in a test, so the only honest row is the pending one.
+  assert.equal(byLabel("实际连通").mark, "⚠️");
+});
+
+test("a loopback-only install says the remote pieces are unnecessary", async t => {
+  const bridge = await bridgeWith(t, {});
+  const response = await get(`http://127.0.0.1:${bridge.port}/setup?k=${bridge.manageSecret}`);
+  const rows = checklistRows(response.body);
+  assert.deepEqual(rows.map(row => row.label), ["本机模式", "实际连通"]);
+  assert.equal(rows[0].mark, "✅");
+  assert.match(rows[0].detail, /不需要公网地址/);
+});
+
+test("a remote install without TLS is called out in the checklist", async t => {
+  const bridge = await bridgeWith(t, {
+    bind: "0.0.0.0", remote: true, publicUrl: "https://browser.example.test", hosts: ["browser.example.test"],
+  });
+  const response = await get(`http://127.0.0.1:${bridge.port}/setup?k=${bridge.manageSecret}`);
+  const tlsRow = checklistRows(response.body).find(row => row.label === "TLS 与端口映射");
+  assert.equal(tlsRow.mark, "⚠️");
+  assert.match(tlsRow.detail, /tls 未开启/);
+});
+
 test("plain HTTP on the TLS port cannot be answered, but must not take the bridge down", async t => {
   const bridge = await tlsBridge(t);
   // The handshake fails before any HTTP parsing, so the browser shows ERR_EMPTY_RESPONSE; what

@@ -55,12 +55,19 @@ export function apply(ctx) {
         acknowledgements.set(sessionId, []);
         for (const draft of response.value.drafts || []) {
           const id = draft.requestId;
-          if (!delivered.has(id)) {
-            if (!appendAnnotationDraft(ctx.get("conversation"), draft)) continue;
-            delivered.set(id, true);
-            if (delivered.size > 500) delivered.delete(delivered.keys().next().value);
+          const pending = acknowledgements.get(sessionId);
+          if (delivered.has(id)) { pending.push({ id }); continue; }
+          // Remember the attempt BEFORE inserting: a throw after a partly applied insert
+          // must never let the next poll insert the same draft again (it did, once a second).
+          delivered.set(id, true);
+          if (delivered.size > 500) delivered.delete(delivered.keys().next().value);
+          try {
+            if (!appendAnnotationDraft(ctx.get("conversation"), draft)) throw new Error("聊天输入框当前不可写入");
+            pending.push({ id });
+          } catch (error) {
+            console.warn("dsh-doyourweb-remote annotation draft", error);
+            pending.push({ id, error: error?.message || "批注无法加入草稿" });
           }
-          acknowledgements.get(sessionId).push({ id });
         }
       } catch (error) { console.warn("dsh-doyourweb-remote annotation draft", error); }
       finally { if (active) busy.delete(sessionId); }

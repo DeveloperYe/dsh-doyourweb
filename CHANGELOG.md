@@ -1,5 +1,27 @@
 # 更新记录
 
+## 0.8.4 · 2026-11-08
+
+修掉「点一次批注，聊天框里冒出二十个重复批注芯片」。
+
+- **根因**：`annotation-drafts.js` 在 `insertReference()` 成功之后调用 `shell.actions.persistDraft()`，
+  而 DSH `0.2.0-rc.2` 的 `InputActions` 根本没有这个方法（`persistDraft` 在
+  `dsh-client-ui-conversation/lib/client.js` 里出现 0 次）。于是每次插入都先成功、再抛 `TypeError`；
+  调用方 `client-entry.js` 只处理 `false` 返回值，异常直接冒进 catch，草稿既没记为已投递、
+  也没回 ack。而它 **每秒轮询一次**，服务端待确认项 **20 秒**才超时 ⇒ 同一份草稿被插约 20 次。
+- **修法 1（止血）**：删掉两处 `persistDraft()` 调用 —— 编辑器提交本身就会喂给 DSH 自己的 draft mirror
+  （`SessionInputShell.bindDraftMirror`），不需要也不存在这一步。涉及 `src/annotation-drafts.js`
+  与 `src/context-display.js` 的 `insertDraftReference()`（`@` 页面芯片同一条路径）。
+- **修法 2（防复发）**：`client-entry.js` 改为**先记 `delivered` 再尝试插入**，插入失败回一条
+  `{ id, error }` 的 ack，让批注工具栏直接显示失败原因，而不是静默重试 20 次。任何未知异常
+  都不再可能变成芯片洪水。
+- **新检查 `npm run verify:input`**：扫描 `src/` 里所有 `shell.<成员>` / `shell.actions.<成员>`，
+  逐个对照**已安装** DSH 的 composer typings（`dsh-client-ui-conversation/lib/types/...`）。
+  这条正是漏掉 0.8.2/0.8.3 的那道闸 —— 单测与 `verify:dsh` 此前都在桩里自己写了 `persistDraft`，
+  等于自己给自己发通行证。已用负向对照验证：塞一行 `shell.actions.persistDraft()` 立刻报错退出 1。
+- 测试：`test/annotation-drafts.test.mjs` 新增两条 —— 无 `persistDraft` 的 shell 也能成功插入芯片、
+  插入被拒时返回 `false`；并把两处桩里的 `persistDraft` 删掉，桩恢复成 DSH 真实契约。
+
 ## 0.8.3 · 2026-11-08
 
 `snapshotChars: 0` 现在是明确的"只授权、不预读"。

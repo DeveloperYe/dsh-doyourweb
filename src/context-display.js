@@ -17,6 +17,7 @@ export function insertDraftReference(conversation, sessionId, reference) {
   const state = shell.state.getSnapshot();
   const end = shell.projection.detectText.length;
   if (!shell.insertReference(reference, { start: end, end, draftRev: state.draftRev })) return false;
-  shell.actions.persistDraft();
+  // The editor commit persists the draft through DSH's own draft mirror; InputActions
+  // has no persistDraft method to call here.
   return true;
 }

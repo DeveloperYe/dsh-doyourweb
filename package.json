@@ -1,6 +1,6 @@
 {
   "name": "dsh-doyourweb-remote",
-  "version": "0.8.3",
+  "version": "0.8.4",
   "description": "Browser tabs for DeepSeek Harness, including a remote browser bridge so DSH can drive a browser that is not on the same machine",
   "type": "module",
   "license": "MIT",
@@ -66,6 +66,7 @@
     "test": "node --test test/*.test.mjs",
     "test:browser": "node scripts/test-browser.mjs",
     "verify:dsh": "node scripts/verify-dsh-contract.mjs",
+    "verify:input": "node scripts/verify-input-actions.mjs",
     "prepack": "npm run build",
     "icons": "node scripts/generate-icons.mjs",
     "screenshot": "node scripts/generate-setup-screenshot.mjs",

@@ -23,7 +23,9 @@ export function appendAnnotationDraft(conversation, request) {
       for (const id of ids) shell.actions.removeAttachment(id);
       return false;
     }
-    shell.actions.persistDraft();
+    // No explicit persist: the editor commit above already feeds DSH's own draft mirror,
+    // and InputActions in DSH 0.2.0-rc.2 has no persistDraft (calling it threw after the
+    // chip was inserted, so the retry loop duplicated the annotation).
     return true;
   } finally {
     const retained = shell.state.getSnapshot().attachmentIds;

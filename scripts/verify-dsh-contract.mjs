@@ -204,7 +204,9 @@ async function verifyBuiltClient(gatewayBundle, inputBundle) {
   const projection = { detectText: draftState.draft };
   context.provide("conversation", { input: { shell: () => ({ projection, state: { getSnapshot: () => draftState }, actions: {
     insertText(text, span) { assert.equal(span.start, projection.detectText.length); draftState.draft += text; projection.detectText += text; draftState.draftRev++; return true; },
-    persistDraft() {}, submit() { assert.fail("draft insertion cannot submit a model message"); },
+    // DSH 0.2.0-rc.2 InputActions is exactly this set — there is no persistDraft. Keeping the
+    // stub faithful is what makes this verifier catch calls the real composer cannot serve.
+    submit() { assert.fail("draft insertion cannot submit a model message"); },
   } }) } });
   let annotationSlot;
   context.provide("slots", { inject: (_name, factory) => factory(), register: (definition, component) => { annotationSlot = { definition, component }; } });

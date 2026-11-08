@@ -8,7 +8,7 @@ import { BrowserBridge } from "../src/bridge.js";
 
 test("generated-extension download links stay origin-relative", () => {
   const builds = [
-    { key: "wss-36.138.189.24-39066", label: "36.138.189.24", endpoint: "wss://36.138.189.24:39066/extension", bytes: 30000 },
+    { key: "wss-203.0.113.10-9443", label: "203.0.113.10", endpoint: "wss://203.0.113.10:9443/extension", bytes: 30000 },
     { key: "ws-127.0.0.1-43287", label: "本机", bytes: 29000 },
   ];
   const decorated = decorateExtensions({ extensionBuilds: builds, port: 43287 });
@@ -20,7 +20,7 @@ test("generated-extension download links stay origin-relative", () => {
     assert.equal(build.download.includes("://"), false, "an absolute URL breaks one of the two origins");
     assert.equal(build.download.startsWith("http"), false, "the scheme must come from the page, not the payload");
   }
-  assert.equal(decorated[0].download, "/extension.zip?p=wss-36.138.189.24-39066");
+  assert.equal(decorated[0].download, "/extension.zip?p=wss-203.0.113.10-9443");
   assert.equal(decorateExtensions({}).length, 0);
 });
 

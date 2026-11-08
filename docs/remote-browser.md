@@ -102,23 +102,43 @@ cloudflared tunnel --url http://127.0.0.1:43187
 |---|---|---|---|
 | `port` | 本机明文监听（CDP 中继 + 本机管理页） | `43187` | 只绑环回，不对外 |
 | `tlsPort` | HTTPS/wss 监听端口（NAT 打到的那一侧） | `8443` | 写 `0` 表示让系统挑空闲端口 |
-| `extensionPort` | **扩展里写的端口 = NAT 外部端口** | 同 `tlsPort` | 外部 9443 → 内部 8443 就靠它 |
-| `hosts` | Host 白名单（浏览器实际用的地址） | – | 白名单外一律 403 |
-| `publicUrl` | 管理页/连接页的对外地址 | – | 远程运维时必须写公网地址 |
+| `extensionPort` | **扩展里写的端口 = 对外端口** | 由 `publicUrl` 推导 | 外部 9443 → 内部 8443 就靠它 |
+| `hosts` | Host 白名单（浏览器实际用的地址） | 由 `publicUrl` 推导 | 白名单外一律 403 |
+| `publicUrl` | 管理页/连接页的对外地址 | – | **远程只填这一个就够**；端口、Host 白名单、wss 协议都由它推导 |
 
-示例：外部 **9443** → 内网 **8443**
+最小可用配置：**只填你自己的对外地址**（把 `<你的公网地址>` 和 `<外部端口>` 换掉即可）
 
 ```yaml
 - id: browser-tabs
   config:
-    port: 43187
     bind: 0.0.0.0
-    hosts: ["36.138.189.24"]
-    tls: true
-    tlsPort: 8443            # 进程在这里监听
-    extensionPort: 9443      # 扩展去连这个（= 面板上的外部端口）
-    publicUrl: "https://36.138.189.24:9443"
     remote: true
+    tls: true                                  # 插件自己终结 TLS
+    publicUrl: "https://<你的公网地址>:<外部端口>"   # ← 只改这一行
+```
+
+写了 `publicUrl` 之后，下面这些自动推导，不必手填：
+
+| 自动推导 | 来源 |
+|---|---|
+| 扩展里写的端口（= 对外端口） | `publicUrl` 的端口；没写端口就用 `tlsPort` |
+| Host 白名单 | `publicUrl` 的主机名（白名单外仍然 403） |
+| 扩展的协议 | `https` → `wss`，`http` → `ws` |
+| 证书 SAN | `publicUrl` 的主机名 + `tlsIps` |
+
+需要"外部端口 ≠ 监听端口"或一个地址对多台机器时，再显式覆盖：
+
+```yaml
+- id: browser-tabs
+  config:
+    bind: 0.0.0.0
+    remote: true
+    tls: true
+    tlsPort: 8443                    # 进程在这里监听
+    extensionPort: 9443              # 对外端口（NAT 转发到 8443）
+    publicUrl: "https://203.0.113.10:9443"
+    hosts: ["203.0.113.10", "browser.example.com"]
+    tlsIps: ["203.0.113.10"]         # 证书 SAN 里要覆盖的公网 IP
 ```
 
 改完重载插件即生效，扩展会自动按新端口重新生成；浏览器里已装的旧扩展也可以在弹窗
@@ -158,11 +178,10 @@ Windows 专属能力，会返回明确错误而不是崩溃。
     port: 43187
     bind: 0.0.0.0
     remote: true
-    hosts: ["36.138.189.24"]
-    tls: true                 # 在插件进程内起 https 监听
-    tlsPort: 8443             # NAT 把外部 8443 打到 172.16.0.59:8443
-    tlsIps: ["36.138.189.24"] # 证书 SAN 里要覆盖的公网地址
-    publicUrl: "https://36.138.189.24:8443"
+    tls: true                            # 在插件进程内起 https 监听
+    tlsPort: 8443                        # 内网监听端口（NAT 把外部端口打到它）
+    tlsIps: ["203.0.113.10"]             # 证书 SAN 里要覆盖的公网 IP（用域名时不用写）
+    publicUrl: "https://203.0.113.10:8443"
 ```
 
 - 首次启动时插件自建一个 10 年有效期的本地 CA，并签发 397 天（浏览器上限）的叶子证书，

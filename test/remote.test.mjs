@@ -41,7 +41,7 @@ test("host headers are matched against loopback plus the configured names only",
 
 test("a tunnel may terminate TLS on another port and still be recognised", async () => {
   const root = await mkdtemp(path.join(os.tmpdir(), "dsh-public-port-"));
-  const bridge = new BrowserBridge({ home: path.join(root, "bridge"), port: 43187, bind: "172.16.0.59", remote: true,
+  const bridge = new BrowserBridge({ home: path.join(root, "bridge"), port: 43187, bind: "192.0.2.10", remote: true,
     hosts: ["browser.example.com", "alt.example.com:8443"], extensionScheme: "wss", extensionPort: 8443,
     publicUrl: "https://browser.example.com:8443/" });
   try {

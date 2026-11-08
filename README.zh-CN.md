@@ -29,7 +29,7 @@
 
 项目由 DSH 插件和配套的 Manifest V3 浏览器扩展组成。插件接入原生 `@`、`/` 菜单，扩展提供标签页信息和控制通道。完成一次配对后，扩展会在后台重连，不必一直打开弹窗。
 
-当前版本为 **0.3.3**，包和浏览器扩展版本一致，变更见[更新记录](CHANGELOG.md)。
+当前版本为 **0.8.0**，包和浏览器扩展版本一致，变更见[更新记录](CHANGELOG.md)。
 
 ## 02 · 功能预览
 
@@ -144,7 +144,7 @@ dsh-doyourweb-remote
 
 ```sh
 git clone https://github.com/DeveloperYe/dsh-doyourweb.git
-cd dsh-doyourweb-remote
+cd dsh-doyourweb
 npm ci
 npm run build
 ```
@@ -162,6 +162,30 @@ npm run build
 
 升级 DSH 插件后，需要从托盘完全退出 DSH 再重新打开，确保加载新版本的主机模块。
 
+### 远程浏览器（浏览器装在另一台电脑上）
+
+想在 DSH 里操作**另一台电脑**（或本机但走公网）的浏览器时，不需要在被控机上装任何常驻软件：
+
+1. 主机侧只加一项配置，把 `<你的公网地址>` 和 `<外部端口>` 换成你自己的：
+
+   ```yaml
+   - id: browser-tabs
+     config:
+       bind: 0.0.0.0
+       remote: true
+       tls: true                                   # 插件自己终结 TLS，无需 Caddy
+       publicUrl: "https://<你的公网地址>:<外部端口>"
+   ```
+
+   扩展要连的端口、Host 白名单、`wss` 协议、证书 SAN 都由 `publicUrl` 自动推导，不用逐项填。
+
+2. 在 DSH 打开 `/browser`，下载「与本机配置匹配的扩展」zip（里面已内置令牌和 CA 证书）。
+3. 在**被控机**的 Edge/Chrome 里解压该目录 → `edge://extensions` 开发者模式 → 加载已解压的扩展。
+4. 双击扩展包里的 `ca.crt` 安装到「受信任的根证书颁发机构」（浏览器无法自己装根证书，这一步必须人工点一次）。
+5. 回到 DSH，用 `@` 选择页面即可。
+
+细节、NAT/隧道/frp、证书轮换见 [docs/remote-browser.md](docs/remote-browser.md)。
+
 ### 配置
 
 默认配置位于 [cordis.patch.yml](cordis.patch.yml)：
@@ -171,6 +195,11 @@ npm run build
 | `port` | `43187` | 本地桥接端口 |
 | `snapshotChars` | `2400` | 页面读取和初始引用上下文的字符预算 |
 | `idleTimeoutMs` | `120000` | 空闲多久后释放调试连接，单位毫秒 |
+| `bind` | `127.0.0.1` | 监听地址；远程接入时改 `0.0.0.0` 或内网地址 |
+| `remote` | `false` | 允许非回环监听时必须显式置 `true` |
+| `publicUrl` | – | **远程只填这一个**：对外地址，端口/Host 白名单/wss/证书 SAN 都由它推导 |
+| `tls` | `false` | 由插件自己终结 TLS（自动生成 CA 与叶子证书） |
+| `tlsPort` | `8443` | TLS 监听端口 |
 
 数据目录为 `<DSH_HOME>/browser-tabs/`；未设置 `DSH_HOME` 时使用 `~/.dsh/browser-tabs/`。插件显式配置的 `home` 优先。环境变量需要设置给 DSH 进程，插件不需要单独配置模型 API Key。
 

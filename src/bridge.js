@@ -59,6 +59,7 @@ export class BrowserBridge extends EventEmitter {
     this.tlsEnabled = tls === true;
     this.tlsPort = Number.isFinite(Number(tlsPort)) && Number(tlsPort) >= 0 ? Number(tlsPort) : 8443;
     this.tlsIps = (Array.isArray(tlsIps) ? tlsIps : []).map(value => String(value).trim()).filter(Boolean);
+    this.deriveFromPublicUrl();
     this.tlsActive = false;
     this.portFallback = portFallback === true;
     this.portFallbackUsed = false;
@@ -91,6 +92,31 @@ export class BrowserBridge extends EventEmitter {
   /** Whether the bridge listens only on this machine. */
   localBind() {
     return ["127.0.0.1", "::1", "localhost"].includes(this.bind.toLowerCase());
+  }
+
+  /**
+   * A single publicUrl is enough for a fresh install: the port the extension dials, the
+   * scheme it speaks and the Host header it sends are all derived from it. Explicit
+   * values always win, so deployments that need split settings keep working.
+   */
+  deriveFromPublicUrl() {
+    if (!this.publicUrl) return;
+    let parsed;
+    try {
+      parsed = new URL(this.publicUrl.includes("://") ? this.publicUrl : `https://${this.publicUrl}`);
+    } catch { return; }
+    const host = (parsed.hostname || "").toLowerCase();
+    if (!host) return;
+    // The extension dials the port the outside world sees, which is not necessarily the
+    // one this process listens on.
+    if (this.extensionPort === undefined || this.extensionPort === null || this.extensionPort === "") {
+      if (parsed.port) this.extensionPort = Number(parsed.port);
+    }
+    // The Host header a browser sends for that URL must pass the allowlist.
+    const bare = entry => (/^(\[[^\]]+\]|[^:]+)/.exec(entry)?.[1] || "").toLowerCase();
+    if (!this.hosts.some(entry => bare(entry) === host)) this.hosts.push(host);
+    // An https public URL means the browser can only reach us over TLS.
+    if (["https:", "wss:"].includes(parsed.protocol) && this.extensionScheme !== "wss") this.extensionScheme = "wss";
   }
 
   /**

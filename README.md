@@ -27,7 +27,7 @@ Browser tasks often depend on pages you have already opened and accounts you hav
 
 The project has two parts: a DSH plugin and a companion Manifest V3 extension. The plugin adds browser references to the native `@` and `/` menus; the extension supplies tab metadata and browser control. Once paired, the extension reconnects in the background without keeping its popup open.
 
-Current version: **0.3.3** for both the package and browser extension. See the [changelog](CHANGELOG.md).
+Current version: **0.8.0** for both the package and browser extension. See the [changelog](CHANGELOG.md).
 
 ## 02 · Preview
 
@@ -164,7 +164,7 @@ This requires a published package. If the registry returns `404`, use the local 
 
 ```sh
 git clone https://github.com/DeveloperYe/dsh-doyourweb.git
-cd dsh-doyourweb-remote
+cd dsh-doyourweb
 npm ci
 npm run build
 ```
@@ -182,6 +182,35 @@ The extension popup and pairing page do not need to remain open. Installing the 
 
 After upgrading the DSH plugin, fully quit DSH from its tray/background process and relaunch it so the new host module is loaded.
 
+### Remote Browser (the browser lives on another machine)
+
+To drive a browser on **a different machine** (or this one over the public internet) you install
+nothing on that machine beyond the extension:
+
+1. Add one setting on the host, replacing `<your-host>` and `<external-port>`:
+
+   ```yaml
+   - id: browser-tabs
+     config:
+       bind: 0.0.0.0
+       remote: true
+       tls: true                                   # the plugin terminates TLS itself
+       publicUrl: "https://<your-host>:<external-port>"
+   ```
+
+   The port the extension dials, the Host allowlist, the `wss` scheme and the certificate
+   SANs are all derived from `publicUrl`; you do not fill them in separately.
+
+2. Open `/browser` in DSH and download the matching extension zip (it already contains the
+   pairing token and the CA certificate).
+3. On the **controlled machine**, unpack it, open `edge://extensions`, enable developer mode
+   and load the unpacked folder.
+4. Double-click the bundled `ca.crt` and install it into *Trusted Root Certification
+   Authorities* — browsers cannot install a root CA themselves, so this is one manual click.
+5. Back in DSH, pick a tab with `@`.
+
+NAT/tunnel setups, certificate rotation and the full option list: [docs/remote-browser.md](docs/remote-browser.md).
+
 ### Configuration
 
 Defaults are declared in [cordis.patch.yml](cordis.patch.yml):
@@ -191,6 +220,11 @@ Defaults are declared in [cordis.patch.yml](cordis.patch.yml):
 | `port` | `43187` | Local bridge port |
 | `snapshotChars` | `2400` | Page-read and initial reference-context budget |
 | `idleTimeoutMs` | `120000` | Idle time before releasing the debugger connection |
+| `bind` | `127.0.0.1` | Listen address; use `0.0.0.0` or a LAN address for remote access |
+| `remote` | `false` | Must be `true` before a non-loopback bind is accepted |
+| `publicUrl` | – | **The only setting a remote install needs**: external origin; port, Host allowlist, wss and certificate SANs derive from it |
+| `tls` | `false` | Let the plugin terminate TLS itself (generates a CA and leaf certificate) |
+| `tlsPort` | `8443` | TLS listen port |
 
 The data directory is `<DSH_HOME>/browser-tabs/`, or `~/.dsh/browser-tabs/` when `DSH_HOME` is unset. An explicit plugin `home` setting takes precedence. Set environment variables on the DSH process; the plugin does not require its own model API key.
 

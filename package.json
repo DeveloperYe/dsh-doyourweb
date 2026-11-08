@@ -1,16 +1,16 @@
 {
   "name": "dsh-doyourweb-remote",
-  "version": "0.7.1",
-  "description": "Browser tabs, element annotations and MCP/CLI-first desktop app control for DeepSeek Harness",
+  "version": "0.8.0",
+  "description": "Browser tabs for DeepSeek Harness, including a remote browser bridge so DSH can drive a browser that is not on the same machine",
   "type": "module",
   "license": "MIT",
   "repository": {
     "type": "git",
-    "url": "git+https://github.com/SheepofSheep/dsh-doyourweb.git"
+    "url": "git+https://github.com/DeveloperYe/dsh-doyourweb.git"
   },
-  "homepage": "https://github.com/SheepofSheep/dsh-doyourweb#readme",
+  "homepage": "https://github.com/DeveloperYe/dsh-doyourweb#readme",
   "bugs": {
-    "url": "https://github.com/SheepofSheep/dsh-doyourweb/issues"
+    "url": "https://github.com/DeveloperYe/dsh-doyourweb/issues"
   },
   "publishConfig": {
     "access": "public",
@@ -87,5 +87,6 @@
   },
   "engines": {
     "node": ">=22"
-  }
+  },
+  "author": "DeveloperYe"
 }

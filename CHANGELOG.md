@@ -1,5 +1,22 @@
 # 更新记录
 
+## 0.8.1 · 2026-11-08
+
+一轮全量审查后修掉的 4 处问题（都是"部署能用、换个人用就踩坑"或纯粹的错误）。
+
+- **`endpointDescription()` 永远返回 `ws://`**：配了 `publicUrl` 或开了 TLS 时，它给出的地址是错的。
+  现在按 `publicUrl` → TLS → 本机回环的顺序给出浏览器真正该拨的 `wss://<host>:<port>/extension`。
+- **`/ca.crt` 的缓存头拼错**（`Content-Cache` → `Cache-Control: no-store`），导致 CA 证书会被浏览器缓存。
+- **管理 cookie 缺 `Secure`**：TLS 连接下发的 `dsh_manage` cookie 现在带 `Secure`，明文回环仍不带
+  （否则本机 http 场景会拿不到 cookie）。
+- **管理密钥可无限猜**：`managementFailures` 原来只累加没人读。现在同一来源 1 分钟内失败超过 10 次
+  返回 `429` + `Retry-After: 60`；**持有正确密钥的请求永远不受限**，不同来源互不影响。
+- `.gitignore` 补上运行期的 `connections.json`。
+- 文档：SSH 转发示例去个人化（`<user>@<DSH-IP>`、`<ssh-port>`）；隧道段落改为"只填 `publicUrl`"。
+
+新增 `test/endpoint-and-headers.test.mjs` 4 条：端点描述在四种部署形态下都正确；`/ca.crt` 的头与鉴权；
+cookie 仅在 TLS 加 `Secure`；失败限流（前 10 次仍是 404 不可区分、第 11 次 429、正确密钥不受限、按来源隔离）。
+
 ## 0.8.0 · 2026-11-08
 
 面向「任何人都能直接用」的通用化：**远程接入只需要填一个地址**，仓库里不再残留任何特定部署的地址。

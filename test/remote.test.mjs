@@ -57,7 +57,9 @@ test("a tunnel may terminate TLS on another port and still be recognised", async
     assert.equal(bridge.publicOrigin(), "https://browser.example.com:8443");
     assert.match(bridge.manageUrl(), /^https:\/\/browser\.example\.com:8443\/manage\?k=[0-9a-f]{64}$/);
     assert.match(bridge.setupUrl(), /^https:\/\/browser\.example\.com:8443\/setup\?k=/);
-    assert.equal(bridge.endpointDescription(), "ws://browser.example.com:43187/extension");
+    // The public URL is authoritative: a tunnel that terminates TLS publishes wss on its
+    // own port, so reporting the plain listen socket would hand out an unusable endpoint.
+    assert.equal(bridge.endpointDescription(), "wss://browser.example.com:8443/extension");
   } finally {
     await bridge.close();
     await rm(root, { recursive: true, force: true });

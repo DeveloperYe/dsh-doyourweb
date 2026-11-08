@@ -48,7 +48,7 @@ DSH 插件一启动就会按当前配置，在 `<DSH_HOME>/browser-tabs/extensio
 在被控端电脑上执行（把地址换成你的 DSH 机器）：
 
 ```powershell
-ssh -N -L 43187:127.0.0.1:43187 -p 8022 administrator@<DSH-IP> `
+ssh -N -L 43187:127.0.0.1:43187 -p <ssh-port> <user>@<DSH-IP> `
     -o ServerAliveInterval=30 -o ExitOnForwardFailure=yes
 ```
 
@@ -89,10 +89,10 @@ cloudflared tunnel --url http://127.0.0.1:43187
 # 得到 https://<name>.trycloudflare.com
 ```
 
-- 桥保持 `bind: 127.0.0.1`，**不需要** `remote: true`；把隧道域名加进 `hosts` 即可
-  （`hosts: ["<name>.trycloudflare.com"]`），因为 Host 头是域名。
-- 扩展用生成的 **域名那一份**（配置 `extensionScheme: wss` + `hosts: ["<name>.trycloudflare.com"]`），
-  它的协议是 `wss`、主机是域名；若隧道端口不是 443，再加 `extensionPort`。
+- 桥保持 `bind: 127.0.0.1`，**不需要** `remote: true`，只加一句
+  `publicUrl: "https://<name>.trycloudflare.com"` 即可：Host 白名单、`wss` 协议和作用域端口
+  都由它推导（隧道端口不是 443 时它也会带上）。
+- 扩展用生成的 **域名那一份**（主机是域名、协议是 `wss`）。
 - Tailscale 更简单：两端装好后 `bind` 填 tailscale 网卡地址（如 `100.x.y.z`），
   `hosts: ["100.x.y.z"]`，扩展直接 `ws://100.x.y.z:43187`，流量在 WireGuard 里。
 

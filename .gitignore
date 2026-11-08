@@ -23,6 +23,7 @@ pairing.json
 authorized.json
 applications.json
 annotations.json
+connections.json
 /browser-tabs/
 .dsh/
 

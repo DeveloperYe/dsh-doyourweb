@@ -18,6 +18,10 @@ import { Diagnostics } from "./diagnostics.js";
 
 export { extensionId } from "./pairing.js";
 
+/** Failed management autorisation attempts from one peer before it cools down. */
+const THROTTLE_LIMIT = 10;
+const THROTTLE_WINDOW_MS = 60000;
+
 export function sameSecret(actual, expected) {
   const a = Buffer.from(actual || ""), b = Buffer.from(expected);
   return a.length === b.length && timingSafeEqual(a, b);
@@ -178,6 +182,19 @@ export class BrowserBridge extends EventEmitter {
    * nginx) publishes the same bridge as wss://<hostname>/extension.
    */
   endpointDescription() {
+    // Report what a browser has to dial, not what we listen on: a public URL or an
+    // active TLS listener changes both the scheme and the port.
+    if (this.publicUrl) {
+      try {
+        const url = new URL(this.publicUrl.includes("://") ? this.publicUrl : `https://${this.publicUrl}`);
+        const scheme = ["https:", "wss:"].includes(url.protocol) ? "wss" : "ws";
+        if (url.host) return `${scheme}://${url.host}/extension`;
+      } catch { /* fall through to the local forms */ }
+    }
+    if (this.tlsActive) {
+      const host = this.hosts[0] || "127.0.0.1";
+      return `wss://${host}:${this.extensionPort || this.tlsPort}/extension`;
+    }
     const host = this.hosts[0] || (this.localBind() ? "127.0.0.1" : this.bind);
     return `ws://${host}:${this.port}/extension`;
   }
@@ -434,9 +451,14 @@ export class BrowserBridge extends EventEmitter {
     // browser may present it too, which is why this is not loopback-only any more.
     if (!this.authorized(request, url)) {
       const peer = request.socket?.remoteAddress || "unknown";
-      const failures = (this.managementFailures.get(peer) || 0) + 1;
-      this.managementFailures.set(peer, failures);
+      // Guessing the per-start secret must cost something: after a handful of misses the
+      // peer cools down instead of being answered forever.
+      const entry = this.managementFailures.get(peer) || { count: 0, since: Date.now() };
+      if (Date.now() - entry.since > THROTTLE_WINDOW_MS) { entry.count = 0; entry.since = Date.now(); }
+      entry.count += 1;
+      this.managementFailures.set(peer, entry);
       if (this.managementFailures.size > 200) this.managementFailures.delete(this.managementFailures.keys().next().value);
+      if (entry.count > THROTTLE_LIMIT) { response.writeHead(429, { "Retry-After": "60" }).end(); return; }
       if (pathname === "/manage" || pathname === "/setup" || pathname === "/extension.zip") {
         response.writeHead(404, { "Content-Type": "text/html; charset=utf-8", "Cache-Control": "no-store" }).end(deniedPage());
         return;
@@ -453,14 +475,14 @@ export class BrowserBridge extends EventEmitter {
       // with this HttpOnly cookie, so a local process cannot read the key back by
       // fetching the management page.
       response.writeHead(200, { "Content-Type": "text/html; charset=utf-8", "Cache-Control": "no-store", "Referrer-Policy": "no-referrer",
-        "Set-Cookie": `dsh_manage=${this.manageSecret}; HttpOnly; SameSite=Strict; Path=/`,
+        "Set-Cookie": `dsh_manage=${this.manageSecret}; HttpOnly; SameSite=Strict; Path=/${request.socket?.encrypted ? "; Secure" : ""}`,
         "Content-Security-Policy": `default-src 'none'; connect-src 'self'; style-src 'unsafe-inline'; script-src 'nonce-${nonce}'; base-uri 'none'; frame-ancestors 'none'` });
       response.end(html); return;
     }
     if (pathname === "/ca.crt" && this.tlsActive) {
       // The trust anchor for the self-signed leaf. It is public by nature, but keep
       // it behind the same gate so only the operator can fetch it conveniently.
-      response.writeHead(200, { "Content-Type": "application/x-x509-ca-cert", "Content-Cache": "no-store",
+      response.writeHead(200, { "Content-Type": "application/x-x509-ca-cert", "Cache-Control": "no-store",
         "Content-Disposition": 'attachment; filename="dsh-doyourweb-remote-ca.crt"',
         "Content-Length": this.ca.caDer.length });
       response.end(this.ca.caDer);
@@ -487,7 +509,7 @@ export class BrowserBridge extends EventEmitter {
     const nonce = randomBytes(16).toString("base64");
     // The form posts back with this cookie, so the PIN endpoint needs no key field.
     response.writeHead(200, { "Content-Type": "text/html; charset=utf-8", "Cache-Control": "no-store",
-      "Set-Cookie": `dsh_manage=${this.manageSecret}; HttpOnly; SameSite=Strict; Path=/`,
+      "Set-Cookie": `dsh_manage=${this.manageSecret}; HttpOnly; SameSite=Strict; Path=/${request.socket?.encrypted ? "; Secure" : ""}`,
       "Content-Security-Policy": `default-src 'none'; style-src 'unsafe-inline'; script-src 'nonce-${nonce}'; base-uri 'none'; frame-ancestors 'none'` });
     response.end(this.setupPage(nonce));
   }

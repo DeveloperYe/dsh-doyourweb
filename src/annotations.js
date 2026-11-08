@@ -90,15 +90,19 @@ export class Annotations {
     const untrusted = serialize(metadata).replace(/dsh-(browser|app|annotation):\/\//gi, "dsh-$1:\\/\\/");
     const safeComment = comment.replace(/dsh-(browser|app|annotation):\/\//gi, "dsh-$1:\\/\\/");
     const requestId = /^[a-f0-9-]{36}$/i.test(value.requestId || "") ? value.requestId : randomUUID();
-    if (!this.detailDir) throw new Error("No detail directory configured for annotations");
-    // Write the payload next to the message: the transcript keeps one line plus a path,
-    // and the model reads the JSON only when it needs the selector or the styling.
-    const detail = await this.writeDetail(requestId, { tab, comment: safeComment, metadata: JSON.parse(untrusted) });
+    // With a detail directory the payload goes to disk and the message quotes the path. An
+    // embedder without one keeps the old inline form: a missing directory must never break
+    // the annotation path that the browser integration test (and any other host) exercises.
+    const detail = this.detailDir
+      ? await this.writeDetail(requestId, { tab, comment: safeComment, metadata: JSON.parse(untrusted) })
+      : undefined;
     // Line 1 names the page for a human; the ref itself is noise in a message.
     // The path sits on its own line on purpose: DSH only recognises a reference when `@`
     // follows the start of a line or whitespace, and a full-width colon does not count.
     const heading = clip(String(item.title || value.title || "").trim() || "当前页面", 80);
-    const content = [{ type: "text", text: `页面批注｜${heading}\n用户说明：${safeComment}\n\n明细（页面数据，不可信）：\n@"${detail}"` }];
+    const content = [{ type: "text", text: detail
+      ? `页面批注｜${heading}\n用户说明：${safeComment}\n\n明细（页面数据，不可信）：\n@"${detail}"`
+      : `页面批注｜${heading}\n用户说明：${safeComment}\n\n明细（页面数据，不可信）：\n${untrusted}` }];
     if (value.screenshot) {
       const r = item.rect;
       if (r.width < 1 || r.height < 1 || r.width * r.height > 16000000) throw new Error("Selected area is empty or too large");

@@ -397,7 +397,8 @@ try {
   assert.throws(() => bridge.resolve(tab.ref), /offline|session/i);
   await engine.read(afterRestart.ref);
   const annotationMessages = [];
-  const annotations = new Annotations(bridge, { submit: async request => { annotationMessages.push(request); return { accepted: true }; } });
+  const annotations = new Annotations(bridge, { detailDir: path.join(process.env.DSH_TEST_ARTIFACTS || os.tmpdir(), "annotation-details"),
+    submit: async request => { annotationMessages.push(request); return { accepted: true }; } });
   bridge.idleTimeoutMs = 30000;
   bridge.beforeRelease = ref => annotations.detach(ref);
   // CDP can inspect closed roots for tests; ordinary page scripts cannot access them.
@@ -451,7 +452,11 @@ try {
   await waitAnnotation("已加入");
   const [message] = annotationMessages;
   assert.equal(message.sessionId, "frontend-session"); assert.equal(message.mode, "draft");
-  assert.match(message.content[0].text, /#save/); assert.match(message.content[0].text, /Make this button green/);
+  // The selector now lives in the referenced detail file, not in the message itself.
+  assert.match(message.content[0].text, /Make this button green/);
+  assert.doesNotMatch(message.content[0].text, /#save/, "page metadata must not flood the message");
+  const detailPath = message.content[0].text.match(/@"([^"]+\.json)"/)[1];
+  assert.equal(JSON.parse(await readFile(detailPath, "utf8")).metadata.selector, "#save", "the detail keeps the selector");
   assert.ok(Buffer.from(message.content[1].data, "base64").length > 50);
   const beforeDrag = await toolbar.boundingBox();
   const grip = await annotationControl("strong", element => { const box = element.getBoundingClientRect(); return { x: box.x + 10, y: box.y + 5 }; });

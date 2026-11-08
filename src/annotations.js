@@ -2,6 +2,7 @@ import { randomUUID } from "node:crypto";
 import { installAnnotator } from "../extension/annotator.js";
 import { clip, serialize } from "./output.js";
 import { mkdir, writeFile } from "node:fs/promises";
+import { ANNOTATION_KEEP, ANNOTATION_MAX_AGE_DAYS, pruneDirectory } from "./retention.js";
 import path from "node:path";
 
 const STYLE_KEYS = new Set(["color", "background-color", "border", "border-radius",
@@ -113,6 +114,8 @@ export class Annotations {
     await mkdir(this.detailDir, { recursive: true });
     const target = path.join(this.detailDir, `${requestId}.json`);
     await writeFile(target, `${JSON.stringify(payload, null, 2)}\n`, { mode: 0o600 });
+    // Annotations are tiny but unbounded: one file per annotation, forever, otherwise.
+    await pruneDirectory(this.detailDir, { keep: ANNOTATION_KEEP, maxAgeDays: ANNOTATION_MAX_AGE_DAYS });
     return target.replace(/\\/g, "/");
   }
 

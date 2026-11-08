@@ -6,6 +6,7 @@ import { canControl } from "./protocol.js";
 import { clip, serialize } from "./output.js";
 import { browserActivity } from "./activity.js";
 import { NetworkCapture } from "./network.js";
+import { CAPTURE_KEEP, CAPTURE_MAX_AGE_DAYS, pruneDirectory } from "./retention.js";
 
 export function pageChunk(snapshot, offset = 0, limit = 2400) {
   if (!Number.isInteger(offset) || offset < 0 || offset > snapshot.text.length) throw new Error("Invalid snapshot cursor");
@@ -364,6 +365,8 @@ export class BrowserEngine {
       await mkdir(this.artifactDir, { recursive: true });
       const output = path.join(this.artifactDir, `browser-${randomUUID()}.png`);
       await page.screenshot({ path: output, fullPage: options.fullPage === true, animations: "disabled", signal });
+      // Keep the folder bounded: screenshots are only useful while the task is live.
+      await pruneDirectory(this.artifactDir, { keep: CAPTURE_KEEP, maxAgeDays: CAPTURE_MAX_AGE_DAYS });
       checkpoint(signal);
       return { tab: ref, url: clip(page.url(), 512), path: output, mediaType: "image/png" };
     }, signal));

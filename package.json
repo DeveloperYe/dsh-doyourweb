@@ -1,6 +1,6 @@
 {
   "name": "dsh-doyourweb-remote",
-  "version": "0.8.2",
+  "version": "0.8.3",
   "description": "Browser tabs for DeepSeek Harness, including a remote browser bridge so DSH can drive a browser that is not on the same machine",
   "type": "module",
   "license": "MIT",

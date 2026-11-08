@@ -359,7 +359,9 @@ export async function apply(ctx, config = {}) {
       if (!entry?.refs.length) { messages.push(outgoing); continue; }
       // Nothing fits next to the boilerplate: leave the reference alone instead of
       // spending the budget on an empty payload.
-      if (tabCapacity(Math.max(400, Math.min(8000, config.snapshotChars || 2400))) < 1) {
+      const configured = Number(config.snapshotChars);
+      const guardBudget = configured === 0 ? 0 : Math.max(400, Math.min(8000, configured || 2400));
+      if (tabCapacity(guardBudget) < 1) {
         messages.push(outgoing);
         continue;
       }
@@ -367,7 +369,10 @@ export async function apply(ctx, config = {}) {
       let context = prepared.get(key);
       if (!context) {
         const tabs = [];
-        const budget = Math.max(400, Math.min(8000, config.snapshotChars || 2400));
+        // snapshotChars: 0 switches the injection off entirely: the reference still
+        // authorises the tab, the model just reads it on demand instead.
+        const configured = Number(config.snapshotChars);
+        const budget = configured === 0 ? 0 : Math.max(400, Math.min(8000, configured || 2400));
         const capacity = budget - contextPrefix.length - contextSuffix.length - 64;
         const count = Math.min(entry.refs.length, 4, tabCapacity(budget));
         const payload = () => ({ tabs, ...(entry.refs.length > count ? { omittedTabs: entry.refs.length - count } : {}) });

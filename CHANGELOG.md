@@ -1,5 +1,19 @@
 # 更新记录
 
+## 0.8.3 · 2026-11-08
+
+`snapshotChars: 0` 现在是明确的"只授权、不预读"。
+
+- 之前 `snapshotChars` 被 `Math.max(400, …)` 夹住，写 0 也等于要一个标签；而一段标签快照至少 400 字符，
+  所以小预算只能造成"空壳或勉强塞一点点"。现在 0 直接关闭注入：`@` 仍然授权该标签，
+  但消息里不再追加 `<browser_context>`，由模型按需调 `browser_read` 取内容。
+- `tabCapacity()` 对 0 / 负数返回 0（关闭），undefined 仍回落到默认 2400，原有行为不变。
+- 补充测试：0 与负数预算都返回 0 个标签。
+
+背景：折叠注入块依赖客户端 UI 服务（`browser-panel.js` 要求 `slots/layout/sidebarRight/
+sidebarRightTabs/conversation/uiConversation/sessions` 七个服务同时就绪），任一缺失整块不执行，
+于是原文直接铺开。0 预算是不依赖客户端版本的确定解。
+
 ## 0.8.2 · 2026-11-08
 
 修掉"@ 一个页面后蹦出一大段空壳"的两个真 bug。

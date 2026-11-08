@@ -18,9 +18,11 @@ const WRAPPER_SLACK = 64;
 
 /** How many tabs actually fit in `budget` once the boilerplate is paid for. */
 export function tabCapacity(budget) {
-  const size = Number(budget);
-  const usable = (Number.isFinite(size) && size > 0 ? size : 2400)
-    - CONTEXT_PREFIX.length - CONTEXT_SUFFIX.length - WRAPPER_SLACK;
+  // 0 (or negative) is the explicit "do not inject anything" setting, not a typo to fix.
+  const raw = budget === undefined || budget === null || budget === "" ? 2400 : Number(budget);
+  const size = Number.isFinite(raw) ? raw : 2400;
+  if (size <= 0) return 0;
+  const usable = size - CONTEXT_PREFIX.length - CONTEXT_SUFFIX.length - WRAPPER_SLACK;
   return Math.max(0, Math.floor(usable / PER_TAB_MIN));
 }
 

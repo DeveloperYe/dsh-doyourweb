@@ -12,6 +12,8 @@ test("a budget that cannot hold one tab reports zero instead of emitting an empt
   assert.equal(tabCapacity(2400), 4, "the default fits four tabs");
   assert.equal(tabCapacity(8000), 18, "the maximum is capped by the caller at four, not here");
   assert.equal(tabCapacity(undefined), 4, "no budget means the default");
+  assert.equal(tabCapacity(0), 0, "zero disables the injection on purpose");
+  assert.equal(tabCapacity(-5), 0);
 });
 
 test("an injected block is removed so the same message never carries two", () => {

@@ -27,7 +27,7 @@ Browser tasks often depend on pages you have already opened and accounts you hav
 
 The project has two parts: a DSH plugin and a companion Manifest V3 extension. The plugin adds browser references to the native `@` and `/` menus; the extension supplies tab metadata and browser control. Once paired, the extension reconnects in the background without keeping its popup open.
 
-Current version: **0.8.0** for both the package and browser extension. See the [changelog](CHANGELOG.md).
+The current version is the `version` in [package.json](package.json); the package and the browser extension share it, and this guide is checked against 0.8.x. See the [changelog](CHANGELOG.md).
 
 ## 02 · Preview
 

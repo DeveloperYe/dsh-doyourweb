@@ -583,7 +583,9 @@ test("annotations go straight to a conversation with no plugin files or annotati
   const { home } = await fixture(t);
   const value = { comment: "Make button green", selector: "#save", url: "https://example.com", text: "Save", rect: { x: 1, y: 2, width: 20, height: 10 } };
   assert.throws(() => annotationData({ ...value, rect: { x: Infinity } }), /bounds/);
-  assert.equal(annotationData({ ...value, text: "x".repeat(999) }).text.length, 600);
+  // The payload rides inside the chat message, so element text is capped tighter than before.
+  assert.equal(annotationData({ ...value, text: "x".repeat(999) }).text.length, 200);
+  assert.equal(annotationData({ ...value, comment: "y".repeat(9000) }).comment.length, 4000, "the user's own words stay");
   const requests = [], before = await readdir(home);
   const notes = new Annotations({}, { submit: async request => { requests.push(request); return { accepted: true }; } });
   const page = { url: () => value.url, screenshot: async options => { assert.equal(options.path, undefined); return Buffer.from("image bytes"); } };

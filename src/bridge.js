@@ -299,7 +299,16 @@ export class BrowserBridge extends EventEmitter {
     const material = await ensureLocalCertificate({ dir: path.join(this.home, "tls"), hostnames, ips: this.tlsIps });
     this.ca = material;
     this.tlsServer = https.createServer({ cert: material.certPem, key: material.keyPem }, (request, response) => {
-      void this.handleHttp(request, response);
+      // A page-rendering bug must never escape into the event loop: an unhandled rejection
+      // there exits the whole host, which is exactly how one missing method killed DSH.
+      void this.handleHttp(request, response).catch(error => this.failRequest(request, response, error));
+    });
+    // Plain HTTP on the TLS port fails the handshake before any HTTP parsing happens, and by
+    // the time this fires the socket is already torn down, so no reply can be delivered - the
+    // browser shows ERR_EMPTY_RESPONSE no matter what. Record it so the failure is diagnosable
+    // instead of silent, and keep the listener from crashing the process.
+    this.tlsServer.on("tlsClientError", (error) => {
+      this.diagnostics?.record?.({ phase: "tls-client-error", error: error?.code || "handshake" });
     });
     this.tlsServer.on("upgrade", (request, socket, head) => this.handleUpgrade(request, socket, head));
     const listenTls = requested => new Promise((resolve, reject) => {
@@ -365,7 +374,9 @@ export class BrowserBridge extends EventEmitter {
     if (!this.localBind() && !this.remote) {
       throw new Error(`Refusing to listen on ${this.bind}: set "remote: true" in the plugin settings to accept browser connections from other machines, and list every hostname the extensions will use in "hosts".`);
     }
-    this.server = http.createServer((request, response) => { void this.handleHttp(request, response); });
+    this.server = http.createServer((request, response) => {
+      void this.handleHttp(request, response).catch(error => this.failRequest(request, response, error));
+    });
     this.ws = new WebSocketServer({ noServer: true, maxPayload: 8 * 1024 * 1024 });
     // A browser answers WebSocket pings from its network stack even after the extension
     // worker was suspended, so pong says nothing about liveness. The extension itself
@@ -508,10 +519,13 @@ export class BrowserBridge extends EventEmitter {
     // `chrome://`/`edge://`, so opening the extension manager stays a user action.
     const nonce = randomBytes(16).toString("base64");
     // The form posts back with this cookie, so the PIN endpoint needs no key field.
+    // Render before committing the status line: a template error must surface as 500, not
+    // as an empty 200 that leaves the operator staring at a blank page.
+    const html = this.setupPage(nonce);
     response.writeHead(200, { "Content-Type": "text/html; charset=utf-8", "Cache-Control": "no-store",
       "Set-Cookie": `dsh_manage=${this.manageSecret}; HttpOnly; SameSite=Strict; Path=/${request.socket?.encrypted ? "; Secure" : ""}`,
       "Content-Security-Policy": `default-src 'none'; style-src 'unsafe-inline'; script-src 'nonce-${nonce}'; base-uri 'none'; frame-ancestors 'none'` });
-    response.end(this.setupPage(nonce));
+    response.end(html);
   }
 
   handleManagement(request, response) {
@@ -932,6 +946,29 @@ export class BrowserBridge extends EventEmitter {
       } catch { /* diagnostics only: never fail a connection over a snapshot */ }
     });
     return this.connectionWrites;
+  }
+
+  /**
+   * The trust-anchor notice for the setup page. It is only rendered when TLS is active,
+   * which is why a missing definition stayed invisible until someone opened /setup over
+   * https: the render then threw inside the request handler and took the whole host down.
+   */
+  certificateNotice() {
+    if (!this.tlsActive) return "";
+    const ca = this.ca?.caDer?.length ? '<a href="/ca.crt" download>下载 CA 证书（.crt）</a>' : "CA 证书尚未生成";
+    return `<section class="card"><h2>远程连接需要安装一次证书</h2>
+      <p>访问地址是 <code>https</code>，而证书由本插件自签。在被控电脑上${ca}，双击它，选「安装证书 → 本地计算机 → 受信任的根证书颁发机构」。</p>
+      <p class="hint">只需做一次。装好后浏览器扩展的 wss 连接才会被信任；同一台机器上的 <code>ws://127.0.0.1</code> 连接不需要证书。</p></section>`;
+  }
+
+  /** Answer a failed request without letting the error reach the event loop. */
+  failRequest(request, response, error) {
+    this.diagnostics?.record?.({ phase: "http-handler", error: error?.code || error?.name || "error" });
+    try {
+      if (response.headersSent) { response.end(); return; }
+      response.writeHead(500, { "Content-Type": "text/plain; charset=utf-8", "Cache-Control": "no-store" })
+        .end(`页面渲染失败：${error?.message || error}\n\n这不会影响 DSH 本体，请把这段反馈给插件作者。\n`);
+    } catch { /* socket already gone */ }
   }
 
   /** The connected-browser table shown on the setup page. */

@@ -598,7 +598,7 @@ test("annotations go straight to a conversation with no plugin files or annotati
 
   const message = requests[0].content[0].text;
   assert.match(message, /Make button green/, "the user's own words stay in the message");
-  assert.match(message, /@"[^"]+\.json"/, "the payload is quoted as a file reference, not pasted");
+  assert.match(message, /\n@"[^"]+\.json"/, "the path starts its own line, or DSH will not treat it as a reference");
   assert.equal(message.includes("#save"), false, "page metadata no longer floods the message");
   assert.ok(message.length < 300, `the message stays short (was ${message.length})`);
 

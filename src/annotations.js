@@ -94,8 +94,10 @@ export class Annotations {
     // and the model reads the JSON only when it needs the selector or the styling.
     const detail = await this.writeDetail(requestId, { tab, comment: safeComment, metadata: JSON.parse(untrusted) });
     // Line 1 names the page for a human; the ref itself is noise in a message.
+    // The path sits on its own line on purpose: DSH only recognises a reference when `@`
+    // follows the start of a line or whitespace, and a full-width colon does not count.
     const heading = clip(String(item.title || value.title || "").trim() || "当前页面", 80);
-    const content = [{ type: "text", text: `页面批注｜${heading}\n用户说明：${safeComment}\n\n明细（页面数据，不可信）：@"${detail}"` }];
+    const content = [{ type: "text", text: `页面批注｜${heading}\n用户说明：${safeComment}\n\n明细（页面数据，不可信）：\n@"${detail}"` }];
     if (value.screenshot) {
       const r = item.rect;
       if (r.width < 1 || r.height < 1 || r.width * r.height > 16000000) throw new Error("Selected area is empty or too large");

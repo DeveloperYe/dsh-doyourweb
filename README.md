@@ -218,7 +218,7 @@ Defaults are declared in [cordis.patch.yml](cordis.patch.yml):
 | Setting | Default | Purpose |
 | --- | --- | --- |
 | `port` | `43187` | Local bridge port |
-| `snapshotChars` | `2400` | Page-read and initial reference-context budget |
+| `snapshotChars` | `2400` | Page-read and reference-context budget; set the reference injection to `0` to disable it (authorize only, read with `browser_read`) |
 | `idleTimeoutMs` | `120000` | Idle time before releasing the debugger connection |
 | `bind` | `127.0.0.1` | Listen address; use `0.0.0.0` or a LAN address for remote access |
 | `remote` | `false` | Must be `true` before a non-loopback bind is accepted |
@@ -349,6 +349,7 @@ Version `0.1.3` includes page annotations, app references and MCP-first app cont
 
 **Why are some pages missing?** Only regular HTTP/HTTPS and authorized local file:// tabs are exposed. Browser-internal and incognito pages are excluded. Check that the extension is enabled and paired if no tabs appear.
 
+**Why does a referenced page dump a wall of text into the chat?** The injected page snapshot is not being folded into a chip; folding relies on client UI services that are not wired in every DSH version. Set `snapshotChars` to `0` to switch the injection off: the `@` reference still authorises the tab and the model reads it on demand with `browser_read` (reload the plugin or restart DSH afterwards).
 **What if port 43187 is already in use?** Avoid activating two plugin copies on the same port. Stop the duplicate bridge or change the plugin's `port` setting and reconnect the extension to that port.
 
 **What are the current limits?** The companion extension is loaded unpacked, not installed from a browser store. Firefox and Safari are not supported. Host API compatibility has been checked against DSH `0.2.0-rc.2`; other versions and native UI workflows need their own verification.

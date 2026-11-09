@@ -1,0 +1,12 @@
+import { chromium } from "playwright-core";
+const base = "http://bg1.idckvm.top:3080";
+const ctx = await chromium.launch({ executablePath: process.env.CHROME_EXE, headless: true, args: ["--no-sandbox","--disable-gpu"] });
+const page = await (await ctx.newContext()).newPage();
+await page.goto(base + "/-/auth/login", { waitUntil: "domcontentloaded" });
+await page.fill("#gate-password", "Haolin@31");
+await page.press("#gate-password", "Enter");
+await page.waitForFunction(() => document.querySelectorAll("textarea,input").length > 0, { timeout: 40000 });
+await page.waitForTimeout(1500);
+const btns = await page.evaluate(() => [...document.querySelectorAll("button,[role=button]")].map(b => ({ a: b.getAttribute("aria-label"), t: b.getAttribute("title"), txt: (b.textContent||"").trim().slice(0,20), cls: (b.className+"").slice(0,40) })).filter(b => b.a || b.t || /attach|file|clip|upload|plus|添加|附件|文件/i.test(b.txt)));
+console.log(JSON.stringify(btns, null, 1).slice(0, 2200));
+await ctx.close();

@@ -113,3 +113,21 @@ test("TLS handshake outcomes are recorded, because a browser only reports a rese
   assert.ok(typeof failed.at(-1).detail === "string" && failed.at(-1).detail.length > 0,
     "with the socket error, which names the actual TLS problem");
 });
+
+test("a failed handshake records how many bytes actually arrived", async t => {
+  const instance = await bridge(t, { tls: true, tlsPort: 0 });
+  await new Promise(resolve => {
+    const socket = net.connect(instance.tlsPort, "127.0.0.1", () => {
+      socket.write("GET /setup HTTP/1.1\r\nHost: probe\r\nConnection: close\r\n\r\n");
+    });
+    socket.on("error", resolve);
+    socket.on("close", resolve);
+    socket.setTimeout(4000, () => { socket.destroy(); resolve(); });
+  });
+  await sleep(700);
+  const incomplete = instance.upgradeLog.filter(entry => entry.reason === "tls-handshake-incomplete");
+  assert.ok(incomplete.length >= 1, "a socket that never finished a handshake is recorded");
+  const last = incomplete.at(-1);
+  assert.ok("bytesRead" in last, "the entry carries a byte count");
+  assert.ok(Number(last.bytesRead) > 0, "and it is non-zero here: plaintext did arrive, the handshake did not");
+});

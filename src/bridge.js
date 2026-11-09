@@ -6,6 +6,11 @@ import { randomUUID, randomBytes, timingSafeEqual } from "node:crypto";
 import { readFile, writeFile, mkdir, rename } from "node:fs/promises";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
+
+/** Read a socket counter without letting a torn-down socket throw. */
+const socketBytes = (socket, name) => {
+  try { return socket?.[name] ?? null; } catch { return null; }
+};
 import { WebSocketServer, WebSocket } from "ws";
 import { chromium } from "playwright-core";
 import { BrowserModel } from "./vendor/browser-model.js";
@@ -264,9 +269,10 @@ export class BrowserBridge extends EventEmitter {
 
   /** Write the snapshot, coalescing bursts so a reconnect loop cannot hammer the disk. */
   async publishUpgrades() {
-    if (!this.upgradesFile || this.upgradeWrite) return;
+    if (!this.upgradesFile || this.upgradeWrite || this.closing) return;
     this.upgradeWrite = (async () => {
       await new Promise(resolve => setTimeout(resolve, 250));
+      if (this.closing) return;
       try {
         await writeFile(this.upgradesFile, `${JSON.stringify({ updated: new Date().toISOString(), entries: this.upgradeLog }, null, 2)}\n`, { mode: 0o600 });
       } catch { /* diagnostics must never break the bridge */ }
@@ -362,9 +368,28 @@ export class BrowserBridge extends EventEmitter {
       this.tlsHandshakeNotice = Date.now();
       this.noteEvent({ accepted: true, reason: "tls-handshake",
         detail: `${socket.getProtocol?.() || "?"} ${socket.getCipher?.()?.name || ""} sni=${socket.servername || "-"}`.slice(0, 160),
+        bytesRead: socketBytes(socket, "bytesRead"),
+        bytesWritten: socketBytes(socket, "bytesWritten"),
         remote: String(socket.remoteAddress || "") });
     });
     this.tlsServer.on("upgrade", (request, socket, head) => this.handleUpgrade(request, socket, head));
+    // Byte accounting happens on the raw socket: by the time tlsClientError fires the TLS socket
+    // is already torn down and its counters read zero, which hides the interesting distinction.
+    // Here a socket that closes without ever completing a handshake reports exactly how many
+    // bytes did arrive, separating "the client sent nothing" from "the first flight was cut off".
+    this.tlsServer.on("connection", raw => {
+      const opened = Date.now();
+      let secured = false;
+      raw.on("secure", () => { secured = true; });
+      raw.on("close", () => {
+        if (secured) return;
+        this.noteEvent({ accepted: false, reason: "tls-handshake-incomplete",
+          detail: `${Date.now() - opened}ms without a finished handshake`,
+          bytesRead: socketBytes(raw, "bytesRead"),
+          bytesWritten: socketBytes(raw, "bytesWritten"),
+          remote: String(raw.remoteAddress || "") });
+      });
+    });
     const listenTls = requested => new Promise((resolve, reject) => {
       const onError = error => { this.tlsServer.off("listening", onListening); reject(error); };
       const onListening = () => { this.tlsServer.off("error", onError); resolve(); };
@@ -1129,6 +1154,7 @@ export class BrowserBridge extends EventEmitter {
     // remove the data directory without racing us.
     this.closing = true;
     await this.connectionWrites.catch(() => {});
+    await this.upgradeWrite?.catch?.(() => {});
     for (const relay of [...this.relays.values()]) this.dropRelay(relay);
     await Promise.all(this.detachments.values());
     for (const client of this.ws?.clients || []) client.close();

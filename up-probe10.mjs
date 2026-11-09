@@ -1,0 +1,17 @@
+import { chromium } from "playwright-core";
+const base = "http://bg1.idckvm.top:3080";
+const ctx = await chromium.launch({ executablePath: process.env.CHROME_EXE, headless: true, args: ["--no-sandbox","--disable-gpu"] });
+const page = await (await ctx.newContext()).newPage();
+await page.goto(base + "/-/auth/login", { waitUntil: "domcontentloaded" });
+await page.fill("#gate-password", "Haolin@31");
+await page.press("#gate-password", "Enter");
+await page.waitForSelector('[aria-label="添加文件或调用指令"]', { timeout: 40000 }).catch(() => {});
+await page.waitForTimeout(1500);
+await page.click('[aria-label="添加文件或调用指令"]');
+await page.waitForTimeout(900);
+await page.evaluate(() => { const items = [...document.querySelectorAll('[role=menuitem],[role=menu] button,[class*=menu] button,[class*=Menu] button')]; const f = items.find(b => /文件file/.test((b.textContent||""))); if (f) f.click(); });
+await page.waitForTimeout(3000);
+await page.screenshot({ path: "D:/Users/Administrator/Documents/deepseek-harness/work/after-file-click-3s.png" });
+const state = await page.evaluate(() => ({ menus: [...document.querySelectorAll('[class*=menu],[class*=Menu]')].length, dialog: [...document.querySelectorAll('[role=dialog]')].length, bodyHasTree: (document.body.innerText||"").match(/工作区|目录|选择|browse|Drive|D:|C:/gi)?.slice(0,8) }));
+console.log(JSON.stringify(state, null, 1));
+await ctx.close();

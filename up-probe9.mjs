@@ -1,0 +1,31 @@
+import { chromium } from "playwright-core";
+const base = "http://bg1.idckvm.top:3080";
+const ctx = await chromium.launch({ executablePath: process.env.CHROME_EXE, headless: true, args: ["--no-sandbox","--disable-gpu"] });
+const page = await (await ctx.newContext()).newPage();
+const net = [];
+page.on("response", (r) => { if (/upload/i.test(r.url())) net.push(`${r.status()} ${r.request().method()}`); });
+await page.goto(base + "/-/auth/login", { waitUntil: "domcontentloaded" });
+await page.fill("#gate-password", "Haolin@31");
+await page.press("#gate-password", "Enter");
+await page.waitForSelector('[aria-label="添加文件或调用指令"]', { timeout: 40000 }).catch(() => {});
+await page.waitForTimeout(1500);
+await page.evaluate(async () => {
+  const resp = await fetch("data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mNk+M9QDwADhgGAWjR9awAAAABJRU5ErkJggg==");
+  const blob = await resp.blob();
+  const dt = new DataTransfer();
+  dt.items.add(new File([blob], "paste-test.png", { type: "image/png" }));
+  const target = document.querySelector('[class*="uV2eYG_input"]') || document.body;
+  target.dispatchEvent(new ClipboardEvent("paste", { bubbles: true, cancelable: true, clipboardData: dt }));
+});
+await page.waitForTimeout(5000);
+console.log("粘贴通道上传:"); net.slice(0,5).forEach(n => console.log("  " + n));
+// 发送带附件消息走端到端
+const chip = await page.evaluate(() => (document.body.innerText||"").includes("paste-test"));
+console.log(`附件 chip 在 UI: ${chip}`);
+await page.keyboard.type("附件链路测试，请忽略");
+await page.keyboard.press("Enter");
+await page.waitForTimeout(8000);
+console.log(`发送后上传请求总数: ${net.length}`);
+const ui2 = await page.evaluate(() => (document.body.innerText || "").slice(0, 300).replace(/\n+/g, " | "));
+console.log("界面: " + ui2.slice(0, 200));
+await ctx.close();

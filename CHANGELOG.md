@@ -1,5 +1,20 @@
 # 更新记录
 
+## 0.9.10 · 2026-11-09
+
+"浏览器连不上"有两种完全不同的原因，而服务端此前区分不了：**客户端一个字节都没发**（本机或中间设备拦截），
+还是**首包发了一部分就被截断**（例如 ClientHello 超出链路允许的包大小）。两种都只表现为
+`ERR_TLS_HANDSHAKE_TIMEOUT`。
+
+- 新增 `reason: "tls-handshake-incomplete"`：在**裸 TCP socket** 上记账，握手没完成的连接关闭时记录
+  **实际收到的字节数**（`bytesRead`）、发出的字节数（`bytesWritten`）、存活时长与远端地址。
+- 为什么不在 `tlsClientError` 里记：那时 TLS socket 已拆解，计数器读到的恒为 0，反而会掩盖区别。
+- `tls-handshake` 成功记录也带上收发字节数，便于与失败样本对照。
+
+判读方式：`bytesRead = 0` → 数据根本没到；`bytesRead ≈ 数百字节且不动` → 首包被截断（大小/分片限制）。
+
+新增测试：明文打 TLS 端口时必须留下 `tls-handshake-incomplete` 且 `bytesRead > 0`。
+
 ## 0.9.9 · 2026-11-09
 
 浏览器只把 TLS 失败报成「已重置连接」，服务端原本一行线索都没有。现在**握手成功与失败都记账**：

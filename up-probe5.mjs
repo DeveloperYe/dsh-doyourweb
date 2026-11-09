@@ -1,0 +1,20 @@
+import { chromium } from "playwright-core";
+const base = "http://bg1.idckvm.top:3080";
+const ctx = await chromium.launch({ executablePath: process.env.CHROME_EXE, headless: true, args: ["--no-sandbox","--disable-gpu"] });
+const page = await (await ctx.newContext()).newPage();
+await page.goto(base + "/-/auth/login", { waitUntil: "domcontentloaded" });
+await page.fill("#gate-password", "Haolin@31");
+await page.press("#gate-password", "Enter");
+await page.waitForSelector('[aria-label="添加文件或调用指令"]', { timeout: 40000 }).catch(() => {});
+await page.waitForTimeout(1200);
+await page.click('[aria-label="添加文件或调用指令"]');
+await page.waitForTimeout(800);
+await page.locator('[role=menuitem]', { hasText: /文件|file/i }).first().click();
+await page.waitForTimeout(1500);
+const ui = await page.evaluate(() => {
+  const t = document.body.innerText || "";
+  const dlg = [...document.querySelectorAll('[role=dialog],[class*=dialog],[class*=Dialog],[class*=picker],[class*=Picker],[class*=browser],[class*=Browser]')].map(e => ({ cls: (e.className+"").slice(0,60), txt: (e.textContent||"").trim().slice(0,80) }));
+  return { hasDialog: dlg.length, snippets: dlg.slice(0, 6), bodySnippet: t.slice(0, 0) };
+});
+console.log(JSON.stringify(ui, null, 1).slice(0, 1600));
+await ctx.close();

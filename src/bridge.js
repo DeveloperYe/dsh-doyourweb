@@ -51,6 +51,9 @@ export class BrowserBridge extends EventEmitter {
     // answer "how many browsers are actually connected right now".
     this.connections = new Set();
     this.connectionsFile = home ? path.join(home, "connections.json") : undefined;
+    this.upgradesFile = home ? path.join(home, "upgrades.json") : undefined;
+    this.upgradeLog = [];
+    this.upgradeWrite = undefined;
     this.connectionWrites = Promise.resolve();
     this.port = port;
     this.bind = String(bind || "127.0.0.1");
@@ -231,6 +234,41 @@ export class BrowserBridge extends EventEmitter {
   }
 
   /** Whether a WebSocket origin may talk to this bridge at all. */
+  /**
+   * Record one WebSocket upgrade attempt. The ring buffer keeps the file small; the token
+   * itself is never written, only its length, so the snapshot can be pasted in a bug report.
+   */
+  noteUpgrade(request, reason, accepted) {
+    const parts = String(request.headers["sec-websocket-protocol"] || "").split(",").map(part => part.trim());
+    this.upgradeLog.push({
+      at: new Date().toISOString(),
+      accepted,
+      reason,
+      host: String(request.headers.host || "").slice(0, 120),
+      origin: String(request.headers.origin || "").slice(0, 120),
+      path: String(request.url || "").slice(0, 160),
+      protocolCount: parts.filter(Boolean).length,
+      tokenLength: (parts[1] || "").length,
+      remote: String(request.socket?.remoteAddress || ""),
+      userAgent: String(request.headers["user-agent"] || "").slice(0, 120),
+    });
+    if (this.upgradeLog.length > 60) this.upgradeLog.splice(0, this.upgradeLog.length - 60);
+    this.diagnostics?.record?.({ phase: accepted ? "upgrade-accepted" : "upgrade-rejected", error: reason });
+    void this.publishUpgrades();
+  }
+
+  /** Write the snapshot, coalescing bursts so a reconnect loop cannot hammer the disk. */
+  async publishUpgrades() {
+    if (!this.upgradesFile || this.upgradeWrite) return;
+    this.upgradeWrite = (async () => {
+      await new Promise(resolve => setTimeout(resolve, 250));
+      try {
+        await writeFile(this.upgradesFile, `${JSON.stringify({ updated: new Date().toISOString(), entries: this.upgradeLog }, null, 2)}\n`, { mode: 0o600 });
+      } catch { /* diagnostics must never break the bridge */ }
+      finally { this.upgradeWrite = undefined; }
+    })();
+  }
+
   trustedOrigin(origin) {
     return origin === `chrome-extension://${this.id}` || origin === `chrome-extension://${this.installId}`;
   }
@@ -338,16 +376,24 @@ export class BrowserBridge extends EventEmitter {
    * request. A published bridge therefore never pairs a remote browser.
    */
   handleUpgrade(request, socket, head) {
-    if (!this.hostAllowed(request.headers.host)) return socket.destroy();
+    // Every branch records why it happened. Extension outages used to be invisible from this
+    // side: a rejected upgrade closed the socket and left nothing behind, so an operator could
+    // not tell a bad token from an untrusted CA or a wrong Host header.
+    const reject = reason => {
+      this.noteUpgrade(request, reason, false);
+      socket.destroy();
+    };
+    if (!this.hostAllowed(request.headers.host)) return reject("host-not-allowed");
     // Same rule as handleHttp: a malformed target must not throw inside an event
     // handler, where it would surface as an uncaught exception.
     let pathname;
     try { pathname = new URL(request.url, "http://127.0.0.1").pathname; }
-    catch { return socket.destroy(); }
+    catch { return reject("malformed-url"); }
     if (pathname === "/extension") {
       const protocols = (request.headers["sec-websocket-protocol"] || "").split(",").map(s => s.trim());
-      if (!this.trustedOrigin(request.headers.origin)) return socket.destroy();
+      if (!this.trustedOrigin(request.headers.origin)) return reject("origin-not-trusted");
       if (sameSecret(protocols[1], this.settings.token)) this.ws.handleUpgrade(request, socket, head, ws => {
+        this.noteUpgrade(request, "accepted", true);
       // Diagnostic identity: two entries with the same UA and profile mean one browser is
       // opening several sockets; differing UAs mean several browsers or installs.
       ws.upgrade = { remote: `${socket.remoteAddress || "?"}:${socket.remotePort || 0}`,
@@ -356,10 +402,14 @@ export class BrowserBridge extends EventEmitter {
     });
       else if (protocols[1] === undefined && BrowserBridge.loopback(request) && request.headers.origin === `chrome-extension://${this.id}`) {
         this.ws.handleUpgrade(request, socket, head, ws => this.acceptPairing(ws));
-      } else socket.destroy();
+      } else if (protocols[1] === undefined) reject("no-token");
+      else reject("token-mismatch");
     } else {
       const relay = this.relays.get(pathname);
-      if (!relay || request.headers.origin || !sameSecret(request.headers.authorization, `Bearer ${this.settings.token}`) || relay.ws) return socket.destroy();
+      if (!relay) return reject("unknown-relay-path");
+      if (request.headers.origin) return reject("relay-origin");
+      if (!sameSecret(request.headers.authorization, `Bearer ${this.settings.token}`)) return reject("relay-authorization");
+      if (relay.ws) return reject("relay-busy");
       this.ws.handleUpgrade(request, socket, head, ws => this.acceptCDP(relay, ws));
     }
   }

@@ -1,5 +1,19 @@
 # 更新记录
 
+## 0.9.8 · 2026-11-09
+
+扩展连不上时，宿主侧原本**什么线索都不留**：拒绝就 close，看不出是令牌不对、Origin 不可信、Host 不在白名单，还是 TLS 没问题但根本没走到升级。
+
+- `handleUpgrade` 的每条分支现在都记账，写入 `<数据目录>/upgrades.json`（环形 60 条，250ms 合并写盘）：
+  时间、是否接受、**原因码**（`host-not-allowed` / `malformed-url` / `origin-not-trusted` /
+  `no-token` / `token-mismatch` / `unknown-relay-path` / `relay-origin` / `relay-authorization` /
+  `relay-busy` / `accepted`）、Host、Origin、path、协议数、远端地址、UA。
+- **只记令牌长度，绝不记令牌值**，快照可以直接贴进 issue。
+- 诊断失败绝不影响桥：写盘异常被吞掉。
+
+新增 `test/upgrade-diagnostics.test.mjs` 3 条：接受会被记录、每种拒绝都有对应原因码、
+快照里不含令牌明文（只含长度）。
+
 ## 0.9.7 · 2026-11-09
 
 `/setup` 页面新增**远程接入自检表**：把"扩展显示离线"这种无信息的失败，变成逐项可看的检查结果。

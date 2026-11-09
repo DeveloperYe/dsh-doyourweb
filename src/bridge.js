@@ -53,6 +53,7 @@ export class BrowserBridge extends EventEmitter {
     this.connectionsFile = home ? path.join(home, "connections.json") : undefined;
     this.upgradesFile = home ? path.join(home, "upgrades.json") : undefined;
     this.upgradeLog = [];
+    this.tlsHandshakeNotice = 0;
     this.upgradeWrite = undefined;
     this.connectionWrites = Promise.resolve();
     this.port = port;
@@ -238,10 +239,17 @@ export class BrowserBridge extends EventEmitter {
    * Record one WebSocket upgrade attempt. The ring buffer keeps the file small; the token
    * itself is never written, only its length, so the snapshot can be pasted in a bug report.
    */
+  /** Append one entry to the diagnostics ring buffer and publish it. */
+  noteEvent(entry) {
+    this.upgradeLog.push({ at: new Date().toISOString(), ...entry });
+    if (this.upgradeLog.length > 60) this.upgradeLog.splice(0, this.upgradeLog.length - 60);
+    this.diagnostics?.record?.({ phase: entry.accepted ? "upgrade-accepted" : "upgrade-rejected", error: entry.reason });
+    void this.publishUpgrades();
+  }
+
   noteUpgrade(request, reason, accepted) {
     const parts = String(request.headers["sec-websocket-protocol"] || "").split(",").map(part => part.trim());
-    this.upgradeLog.push({
-      at: new Date().toISOString(),
+    this.noteEvent({
       accepted,
       reason,
       host: String(request.headers.host || "").slice(0, 120),
@@ -252,9 +260,6 @@ export class BrowserBridge extends EventEmitter {
       remote: String(request.socket?.remoteAddress || ""),
       userAgent: String(request.headers["user-agent"] || "").slice(0, 120),
     });
-    if (this.upgradeLog.length > 60) this.upgradeLog.splice(0, this.upgradeLog.length - 60);
-    this.diagnostics?.record?.({ phase: accepted ? "upgrade-accepted" : "upgrade-rejected", error: reason });
-    void this.publishUpgrades();
   }
 
   /** Write the snapshot, coalescing bursts so a reconnect loop cannot hammer the disk. */
@@ -341,12 +346,23 @@ export class BrowserBridge extends EventEmitter {
       // there exits the whole host, which is exactly how one missing method killed DSH.
       void this.handleHttp(request, response).catch(error => this.failRequest(request, response, error));
     });
-    // Plain HTTP on the TLS port fails the handshake before any HTTP parsing happens, and by
-    // the time this fires the socket is already torn down, so no reply can be delivered - the
-    // browser shows ERR_EMPTY_RESPONSE no matter what. Record it so the failure is diagnosable
-    // instead of silent, and keep the listener from crashing the process.
-    this.tlsServer.on("tlsClientError", (error) => {
-      this.diagnostics?.record?.({ phase: "tls-client-error", error: error?.code || "handshake" });
+    // A failed TLS handshake is the one failure a browser reports only as "connection reset",
+    // with nothing on this side to look at: the socket is torn down before any HTTP exists. It
+    // is recorded here so an operator can tell a client that rejects the certificate from a
+    // middlebox that resets the handshake or a client that simply never sends one.
+    this.tlsServer.on("tlsClientError", (error, socket) => {
+      this.noteEvent({ accepted: false, reason: "tls-handshake-failed",
+        detail: String(error?.code || error?.message || "unknown").slice(0, 160),
+        remote: String(socket?.remoteAddress || "") });
+    });
+    // A completed handshake is recorded too: it proves the certificate was accepted and moves
+    // the investigation to the HTTP/WebSocket layer above it.
+    this.tlsServer.on("secureConnection", socket => {
+      if (this.tlsHandshakeNotice && Date.now() - this.tlsHandshakeNotice < 5000) return;
+      this.tlsHandshakeNotice = Date.now();
+      this.noteEvent({ accepted: true, reason: "tls-handshake",
+        detail: `${socket.getProtocol?.() || "?"} ${socket.getCipher?.()?.name || ""} sni=${socket.servername || "-"}`.slice(0, 160),
+        remote: String(socket.remoteAddress || "") });
     });
     this.tlsServer.on("upgrade", (request, socket, head) => this.handleUpgrade(request, socket, head));
     const listenTls = requested => new Promise((resolve, reject) => {

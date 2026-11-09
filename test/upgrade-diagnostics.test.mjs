@@ -3,6 +3,8 @@ import assert from "node:assert/strict";
 import { mkdtemp, readFile, rm } from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
+import { request as httpsRequest } from "node:https";
+import net from "node:net";
 import { WebSocket } from "ws";
 import { BrowserBridge } from "../src/bridge.js";
 
@@ -77,4 +79,37 @@ test("the snapshot never carries the token itself", async t => {
   assert.equal(entry.tokenLength, instance.settings.token.length, "only the length is kept");
   assert.equal(entry.accepted, true);
   assert.ok(parsed.entries.length >= 1);
+});
+
+const sleep = ms => new Promise(resolve => setTimeout(resolve, ms));
+
+test("TLS handshake outcomes are recorded, because a browser only reports a reset", async t => {
+  const instance = await bridge(t, { tls: true, tlsPort: 0 });
+
+  // A completed handshake: proves the certificate was accepted by the client.
+  await new Promise(resolve => {
+    const call = httpsRequest({ host: "127.0.0.1", port: instance.tlsPort, path: "/manage",
+      rejectUnauthorized: false }, response => { response.resume(); response.on("end", resolve); });
+    call.on("error", resolve);
+    call.end();
+  });
+  await sleep(500);
+  assert.equal(instance.upgradeLog.some(entry => entry.reason === "tls-handshake"), true,
+    "a finished handshake is distinguishable from a failed one");
+
+  // A handshake that dies: plaintext on the TLS port. The browser shows only "connection reset",
+  // so the reason code plus the socket error is the only evidence an operator ever gets.
+  await new Promise(resolve => {
+    const socket = net.connect(instance.tlsPort, "127.0.0.1", () => {
+      socket.write("GET /setup HTTP/1.1\r\nHost: probe\r\nConnection: close\r\n\r\n");
+    });
+    socket.on("error", resolve);
+    socket.on("close", resolve);
+    socket.setTimeout(4000, () => { socket.destroy(); resolve(); });
+  });
+  await sleep(700);
+  const failed = instance.upgradeLog.filter(entry => entry.reason === "tls-handshake-failed");
+  assert.ok(failed.length >= 1, "the failed handshake is recorded");
+  assert.ok(typeof failed.at(-1).detail === "string" && failed.at(-1).detail.length > 0,
+    "with the socket error, which names the actual TLS problem");
 });

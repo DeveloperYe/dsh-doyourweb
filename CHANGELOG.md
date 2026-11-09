@@ -1,5 +1,21 @@
 # 更新记录
 
+## 0.9.9 · 2026-11-09
+
+浏览器只把 TLS 失败报成「已重置连接」，服务端原本一行线索都没有。现在**握手成功与失败都记账**：
+
+- `tlsClientError` → `reason: "tls-handshake-failed"` + `detail`（socket 错误码，如
+  `ECONNRESET` / `ERR_SSL_...`）+ 远端地址；
+- `secureConnection` → `reason: "tls-handshake"` + `detail`（协商出的 `TLSv1.3 TLS_AES_256_GCM_SHA384 sni=...`），
+  这只记每 5 秒一条，避免刷新页面刷爆环形缓冲。
+
+有了这两类记录就能一眼区分三种情况：**客户端拒绝了证书**（失败码带 SSL 语义）、**中间设备重置握手**
+（失败码 `ECONNRESET` 且没有成功记录）、**握手成功但没发升级请求**（有 `tls-handshake` 却没有
+`accepted`/`tls-handshake-failed` 之后的条目）。
+
+新增测试：一次正常 https 请求会留下 `tls-handshake`，一次明文打进 TLS 端口会留下
+`tls-handshake-failed` 且带非空 detail。
+
 ## 0.9.8 · 2026-11-09
 
 扩展连不上时，宿主侧原本**什么线索都不留**：拒绝就 close，看不出是令牌不对、Origin 不可信、Host 不在白名单，还是 TLS 没问题但根本没走到升级。

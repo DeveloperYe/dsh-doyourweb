@@ -288,15 +288,40 @@ export class BrowserEngine {
       if (px !== undefined) await glide(px, py);
       await page.mouse.wheel(0, step.amount || 600);
     } else if (action === "drag") {
-      if (step.toX === undefined && step.toRatioX === undefined) throw new Error("mouse drag requires toX and toY, or toRatioX and toRatioY");
-      const toX = point(step.toX, step.toRatioX, "x"), toY = point(step.toY, step.toRatioY, "y");
-      if (toX === undefined || toY === undefined) throw new Error("mouse drag requires toX and toY, or toRatioX and toRatioY");
+      if (step.toX === undefined && step.toXRatio === undefined && step.toRatioX === undefined) {
+        throw new Error("mouse drag requires toX and toY, or toXRatio and toYRatio");
+      }
+      const toX = point(step.toX, step.toXRatio ?? step.toRatioX, "x");
+      const toY = point(step.toY, step.toYRatio ?? step.toRatioY, "y");
+      if (toX === undefined || toY === undefined) {
+        throw new Error("mouse drag requires toX and toY, or toXRatio and toYRatio");
+      }
       await glide(px, py);
       if (human) await wait(hoverMs);
       await page.mouse.down({ button });
       try {
-        const steps = Math.max(4, Math.min(30, Math.round((step.durationMs || 400) / 40)));
-        await page.mouse.move(toX, toY, { steps });
+        // A long-press drag: hold still first, because drag handlers that arm on a timer never
+        // see a drag that starts moving immediately.
+        const pressMs = Math.min(3000, Math.max(0, step.pressMs ?? 0));
+        if (pressMs) await wait(pressMs);
+        const duration = Math.min(10000, Math.max(60, step.durationMs || 400));
+        if (!human || step.easing === "linear") {
+          const steps = Math.max(4, Math.min(40, Math.round(duration / 40)));
+          await page.mouse.move(toX, toY, { steps });
+        } else {
+          // People accelerate away from the press point and decelerate into the drop point, so
+          // the intermediate positions are spread over an ease-in-out curve rather than evenly.
+          // Drag handlers that watch velocity (inertial scrolling, slider snapping) need that.
+          const segments = Math.max(6, Math.min(40, Math.round(duration / 40)));
+          const pause = Math.max(4, Math.round(duration / segments));
+          for (let index = 1; index <= segments; index++) {
+            checkpoint(signal);
+            const progress = index / segments;
+            const eased = progress < 0.5 ? 2 * progress * progress : 1 - ((-2 * progress + 2) ** 2) / 2;
+            await page.mouse.move(px + (toX - px) * eased, py + (toY - py) * eased);
+            if (index < segments) await wait(pause);
+          }
+        }
         if (human) await wait(Math.min(400, holdMs));
       } finally { await page.mouse.up({ button }); }
       this.pointerAt.set(ref, { x: toX, y: toY });

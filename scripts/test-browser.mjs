@@ -38,7 +38,7 @@ const server = createServer((req, response) => {
     return;
   }
   response.setHeader("Content-Type", "text/html");
-  response.end(req.url === "/frame" ? '<button onclick="this.textContent=\'Frame clicked\'">Frame button</button>' : `<!doctype html><html><title>DSH Browser Test</title><link rel="icon" href="/favicon.png"><nav>Navigation remains available</nav><main><h1>Browser test</h1><label>Name <input id="name"></label><label><input type="checkbox" id="enabled">Enabled</label><button id="save">Save</button><output id="out"></output><input type="file" id="hidden-file" hidden><button id="choose" onclick="document.querySelector('#hidden-file').click()">Choose attachment</button><button id="soft" onclick="history.pushState({},'', '?panel=2#new');document.querySelector('#out').textContent='New panel'">Soft route</button></main><iframe src="/frame"></iframe><iframe id="upload-frame" src="${uploadUrl}"></iframe><div id="canvas-like" style="position:fixed;left:20px;top:150px;width:160px;height:60px;background:#334;color:#fff" onclick="document.querySelector('#out').textContent='Pointer hit'">Canvas stand-in</div><script>document.querySelector('#save').onclick=()=>document.querySelector('#out').textContent='Saved '+document.querySelector('#name').value;</script></html>`);
+  response.end(req.url === "/frame" ? '<button onclick="this.textContent=\'Frame clicked\'">Frame button</button>' : `<!doctype html><html><title>DSH Browser Test</title><link rel="icon" href="/favicon.png"><nav>Navigation remains available</nav><main><h1>Browser test</h1><label>Name <input id="name"></label><label><input type="checkbox" id="enabled">Enabled</label><button id="save">Save</button><output id="out"></output><input type="file" id="hidden-file" hidden><button id="choose" onclick="document.querySelector('#hidden-file').click()">Choose attachment</button><button id="soft" onclick="history.pushState({},'', '?panel=2#new');document.querySelector('#out').textContent='New panel'">Soft route</button></main><iframe src="/frame"></iframe><iframe id="upload-frame" src="${uploadUrl}"></iframe><div id="canvas-like" style="position:fixed;left:20px;top:150px;width:320px;height:60px;background:#334;color:#fff" onclick="document.querySelector('#out').textContent='Pointer hit'" onmousedown="var d=this.dataset;d.down=(+d.down||0)+1;d.moves=0" onmousemove="var d=this.dataset;if(d.down)d.moves=(+d.moves||0)+1" onmouseup="var d=this.dataset;d.up=(+d.up||0)+1;document.querySelector('#out').textContent='Drag '+d.down+'/'+d.up+'/'+d.moves">Canvas stand-in</div><script>document.querySelector('#save').onclick=()=>document.querySelector('#out').textContent='Saved '+document.querySelector('#name').value;</script></html>`);
 });
 await new Promise(resolve => server.listen(0, "127.0.0.1", resolve));
 const fixtureUrl = `http://127.0.0.1:${server.address().port}`;
@@ -263,6 +263,20 @@ try {
     steps: [{ op: "mouse", action: "click", x: 100, y: 180 }] });
   assert.match(guarded.failure?.error ?? "", /Viewport changed since the screenshot/);
   engine.viewports.set(tab.ref, vp);
+
+  // A drag must move in several steps (easing), and pressMs must hold still before moving.
+  const dragSurface = page.locator("#canvas-like");
+  const pressesBefore = Number(await dragSurface.getAttribute("data-down") || 0);
+  const releasesBefore = Number(await dragSurface.getAttribute("data-up") || 0);
+  const surfaceRead = await engine.read(tab.ref);
+  const dragged = await engine.act(tab.ref, { snapshot: surfaceRead.snapshot, observe: "summary", steps: [
+    { op: "mouse", action: "drag", x: 40, y: 180, toX: 300, toY: 180, durationMs: 400, pressMs: 200 },
+  ] });
+  assert.equal(dragged.completed.length, 1, JSON.stringify(dragged));
+  assert.equal(Number(await dragSurface.getAttribute("data-down")), pressesBefore + 1, "the drag presses exactly once");
+  assert.equal(Number(await dragSurface.getAttribute("data-up")), releasesBefore + 1, "and releases exactly once");
+  assert.ok(Number(await dragSurface.getAttribute("data-moves")) >= 5,
+    "the drag passes through intermediate positions instead of teleporting");
 
   const outside = await engine.read(tab.ref);
   // A step that fails after dispatch is reported in the result, not thrown.

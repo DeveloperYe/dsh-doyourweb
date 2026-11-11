@@ -217,7 +217,7 @@ npm run build
 | 模型工具 | 用法 |
 | --- | --- |
 | `browser_read` | 默认 `mode: "auto"` 先检测 WebMCP，没有可用工具时返回 DOM 快照。工具不适合任务时用 `mode: "dom"`，可按 `selector`、`query`、`depth` 缩小范围；`cursor` 对 DOM 内容分页，`limit` 范围为 400～8,000 字符。 |
-| `browser_act` | 使用最新快照 ID，执行点击、填入、按键、选择、勾选、悬停、滚动、导航、前进后退、等待或提取。 |
+| `browser_act` | 使用最新快照 ID，执行点击、填入、按键、选择、勾选、悬停、滚动、导航、前进后退、等待或提取。`mouse` 按视口 CSS 像素发原始指针输入（`click`／`double_click`／`right_click`／`move`／`drag`／`wheel`），用于 canvas 渲染、没有 DOM 元素的界面。 |
 | `browser_capture` | 需要检查画面时，将截图保存到本地。 |
 | `browser_webmcp_list` | 发现页面工具，或通过 `query` 缩小工具目录；目录有效时可直接复用。 |
 | `browser_webmcp_call` | 用 `catalog`、`name`、`arguments` 调用匹配的页面工具，成功后返回 `nextCatalog` 供下一次调用。 |

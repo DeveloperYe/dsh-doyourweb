@@ -175,6 +175,50 @@ export class BrowserEngine {
     }, signal));
   }
 
+  /**
+   * Raw pointer input, for UIs that draw their controls instead of using elements: canvas
+   * games, canvas maps, custom widgets. Coordinates are viewport CSS pixels with the origin at
+   * the top-left of the visible area, which is the space browser_capture reports once its
+   * device pixels are divided by the reported devicePixelRatio.
+   */
+  async pointer(page, step, signal) {
+    checkpoint(signal);
+    const action = step.action || "click";
+    const button = step.button || "left";
+    const x = step.x, y = step.y;
+    if (action !== "wheel" && action !== "move" && (x === undefined || y === undefined)) {
+      throw new Error("mouse " + action + " requires x and y in viewport CSS pixels");
+    }
+    // page.viewportSize() is null for a browser attached over CDP, so ask the document instead.
+    const viewport = await page.evaluate(() => ({ width: window.innerWidth, height: window.innerHeight }))
+      .catch(() => null) || page.viewportSize?.() || { width: 0, height: 0 };
+    const limit = (value, axis) => {
+      if (value === undefined) return undefined;
+      const max = axis === "x" ? viewport.width : viewport.height;
+      if (max && (value < 0 || value > max)) {
+        throw new Error(`mouse coordinates are outside the ${viewport.width}x${viewport.height} viewport; ` +
+          "divide browser_capture pixels by its devicePixelRatio");
+      }
+      return value;
+    };
+    const px = limit(x, "x"), py = limit(y, "y");
+    if (action === "move") await page.mouse.move(px ?? 0, py ?? 0);
+    else if (action === "wheel") {
+      if (px !== undefined) await page.mouse.move(px, py);
+      await page.mouse.wheel(0, step.amount || 600);
+    } else if (action === "drag") {
+      if (step.toX === undefined || step.toY === undefined) throw new Error("mouse drag requires toX and toY");
+      const toX = limit(step.toX, "x"), toY = limit(step.toY, "y");
+      const steps = Math.max(1, Math.min(30, Math.round(step.durationMs ? step.durationMs / 50 : 10)));
+      await page.mouse.move(px, py);
+      await page.mouse.down({ button });
+      try { await page.mouse.move(toX, toY, { steps }); }
+      finally { await page.mouse.up({ button }); }
+    } else if (action === "double_click") await page.mouse.dblclick(px, py, { button });
+    else await page.mouse.click(px, py, { button });
+    checkpoint(signal);
+  }
+
   locator(page, step) {
     if (step.ref) {
       if (!/^(?:f\d+)?e\d+$/.test(step.ref)) throw new Error("Use an element ref from the latest browser_read snapshot");
@@ -230,6 +274,8 @@ export class BrowserEngine {
           else if (step.op === "forward") await page.goForward({ waitUntil: "domcontentloaded", signal });
           else if (step.op === "scroll") {
             await page.mouse.wheel(0, step.amount || 600);
+          } else if (step.op === "mouse") {
+            await this.pointer(page, step, signal);
           } else {
             const target = this.locator(page, step);
             if (activity && !["wait", "extract", "upload"].includes(step.op)) await activity.pulse(target, signal).catch(() => {});
@@ -371,7 +417,16 @@ export class BrowserEngine {
       // Keep the folder bounded: screenshots are only useful while the task is live.
       await pruneDirectory(this.artifactDir, { keep: CAPTURE_KEEP, maxAgeDays: CAPTURE_MAX_AGE_DAYS });
       checkpoint(signal);
-      return { tab: ref, url: clip(page.url(), 512), path: output, mediaType: "image/png" };
+      // The PNG is in device pixels; mouse actions take CSS pixels. Reporting the ratio and the
+      // viewport here is what lets a caller turn "the button looks like it is at (944, 678)"
+      // into coordinates it can actually click.
+      const viewport = await page.evaluate(() => ({
+        width: window.innerWidth, height: window.innerHeight,
+        devicePixelRatio: window.devicePixelRatio || 1,
+        scrollX: Math.round(window.scrollX), scrollY: Math.round(window.scrollY),
+      })).catch(() => undefined);
+      return { tab: ref, url: clip(page.url(), 512), path: output, mediaType: "image/png",
+        fullPage: options.fullPage === true, ...(viewport ? { viewport } : {}) };
     }, signal));
   }
 }

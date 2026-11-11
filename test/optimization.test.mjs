@@ -68,8 +68,10 @@ test("failed drag and drop stop once and expose uncertain effects without replay
 test("Windows helper reuses loaded types and restarts after cancellation", { skip: process.platform !== "win32" }, async () => {
   const worker = new PowerShellWorker();
   try {
-    await worker.run("Add-Type 'public class DshWorkerRegression { public static int Value = 7; }'");
-    assert.equal((await worker.run("[DshWorkerRegression]::Value")).stdout, "7");
+    // Add-Type compiles C# on first use, which can take well over the 10s default on a busy
+    // machine: a generous timeout keeps this test about the behaviour, not about CPU contention.
+    await worker.run("Add-Type 'public class DshWorkerRegression { public static int Value = 7; }'", { timeout: 60000 });
+    assert.equal((await worker.run("[DshWorkerRegression]::Value", { timeout: 30000 })).stdout, "7");
     const controller = new AbortController();
     const pending = worker.run("Start-Sleep -Seconds 20; 'late'", { signal: controller.signal });
     setTimeout(() => controller.abort(new Error("test stop")), 100);

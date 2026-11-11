@@ -1,5 +1,22 @@
 # 更新记录
 
+## 0.9.11 · 2026-11-12
+
+canvas 渲染的界面（Egret 等游戏引擎、canvas 地图、自绘控件）没有任何可点击的 DOM 元素，而
+`browser_act` 只能按元素引用或 CSS 选择器点击，所以这类界面此前完全无法操作。
+
+- 新增动作 `op: "mouse"`，直接发原始指针输入：
+  `action` 取 `click` / `double_click` / `right_click` / `move` / `drag` / `wheel`，
+  坐标 `x`/`y`（drag 另需 `toX`/`toY`），可选 `button`、`durationMs`、`amount`（滚轮）。
+- **坐标系**：视口内 CSS 像素，原点在可见区域左上角。`browser_capture` 现在返回
+  `viewport: { width, height, devicePixelRatio, scrollX, scrollY }`，截图像素除以
+  `devicePixelRatio` 即为可点击坐标（2 倍屏尤其要注意）。
+- 越界坐标会**直接报错**而不是静默点到别处：错误信息里带上实际视口尺寸，避免"点了但没反应"。
+- 拖拽在 `down` 与 `up` 之间用 `try/finally` 保证松开，中途取消不会留下按住的鼠标键。
+
+新增集成断言（真实 Chromium）：`browser_capture` 必须带视口信息；按坐标点击一个自绘
+（非元素）区域必须命中；越界坐标必须被拒。
+
 ## 0.9.10 · 2026-11-09
 
 "浏览器连不上"有两种完全不同的原因，而服务端此前区分不了：**客户端一个字节都没发**（本机或中间设备拦截），

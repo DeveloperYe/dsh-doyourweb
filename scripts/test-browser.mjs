@@ -38,7 +38,7 @@ const server = createServer((req, response) => {
     return;
   }
   response.setHeader("Content-Type", "text/html");
-  response.end(req.url === "/frame" ? '<button onclick="this.textContent=\'Frame clicked\'">Frame button</button>' : `<!doctype html><html><title>DSH Browser Test</title><link rel="icon" href="/favicon.png"><nav>Navigation remains available</nav><main><h1>Browser test</h1><label>Name <input id="name"></label><label><input type="checkbox" id="enabled">Enabled</label><button id="save">Save</button><output id="out"></output><input type="file" id="hidden-file" hidden><button id="choose" onclick="document.querySelector('#hidden-file').click()">Choose attachment</button><button id="soft" onclick="history.pushState({},'', '?panel=2#new');document.querySelector('#out').textContent='New panel'">Soft route</button></main><iframe src="/frame"></iframe><iframe id="upload-frame" src="${uploadUrl}"></iframe><script>document.querySelector('#save').onclick=()=>document.querySelector('#out').textContent='Saved '+document.querySelector('#name').value;</script></html>`);
+  response.end(req.url === "/frame" ? '<button onclick="this.textContent=\'Frame clicked\'">Frame button</button>' : `<!doctype html><html><title>DSH Browser Test</title><link rel="icon" href="/favicon.png"><nav>Navigation remains available</nav><main><h1>Browser test</h1><label>Name <input id="name"></label><label><input type="checkbox" id="enabled">Enabled</label><button id="save">Save</button><output id="out"></output><input type="file" id="hidden-file" hidden><button id="choose" onclick="document.querySelector('#hidden-file').click()">Choose attachment</button><button id="soft" onclick="history.pushState({},'', '?panel=2#new');document.querySelector('#out').textContent='New panel'">Soft route</button></main><iframe src="/frame"></iframe><iframe id="upload-frame" src="${uploadUrl}"></iframe><div id="canvas-like" style="position:fixed;left:20px;top:150px;width:160px;height:60px;background:#334;color:#fff" onclick="document.querySelector('#out').textContent='Pointer hit'">Canvas stand-in</div><script>document.querySelector('#save').onclick=()=>document.querySelector('#out').textContent='Saved '+document.querySelector('#name').value;</script></html>`);
 });
 await new Promise(resolve => server.listen(0, "127.0.0.1", resolve));
 const fixtureUrl = `http://127.0.0.1:${server.address().port}`;
@@ -237,6 +237,21 @@ try {
   await page.waitForFunction(() => document.querySelector("#drop-zone").dataset.file === "local fixture only");
   assert.equal(await page.locator("#drop-zone").getAttribute("data-drops"), "2", "neither action replays a drop");
   assert.equal((await engine.network(tab.ref)).capturing, false);
+  // Canvas-rendered UIs have no elements to point at, so raw pointer input is the only route.
+  const pointerRead = await engine.read(tab.ref);
+  const shot = await engine.capture(tab.ref);
+  assert.ok(shot.viewport && shot.viewport.devicePixelRatio >= 1,
+    "capture reports the viewport so screenshot pixels can be converted to CSS pixels");
+  const pointer = await engine.act(tab.ref, { snapshot: pointerRead.snapshot, observe: "summary", steps: [
+    { op: "mouse", action: "click", x: 100, y: 180 },
+  ] });
+  assert.equal(pointer.completed.length, 1, JSON.stringify(pointer));
+  assert.equal(await page.locator("#out").textContent(), "Pointer hit", "the pointer reached the stand-in surface");
+  const outside = await engine.read(tab.ref);
+  // A step that fails after dispatch is reported in the result, not thrown.
+  const rejected = await engine.act(tab.ref, { snapshot: outside.snapshot,
+    steps: [{ op: "mouse", action: "click", x: 5000, y: 10 }] });
+  assert.match(rejected.failure?.error ?? "", /outside the \d+x\d+ viewport/);
   const networkStart = await engine.network(tab.ref, { action: "start" }); assert.ok(networkStart.capturingSince);
   const capturedPage = await bridge.page(tab.ref);
   const capturedResponse = capturedPage.waitForResponse(response => response.url().includes("/api/test?"));

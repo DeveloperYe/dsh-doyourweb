@@ -242,7 +242,7 @@ After referencing a page, you can ask:
 | Model tool | Use |
 | --- | --- |
 | `browser_read` | Default `mode: "auto"` discovers WebMCP tools first, otherwise returns a DOM snapshot. Use `mode: "dom"` when site tools do not cover the task; narrow with `selector`, `query` or `depth`. `cursor` paginates DOM content; `limit` accepts 400-8,000 characters. |
-| `browser_act` | Use the latest snapshot ID to click, fill, press, select, check, hover, scroll, navigate, go back/forward, wait or extract. `mouse` sends raw pointer input (`click`, `double_click`, `right_click`, `move`, `drag`, `wheel`) at `x`/`y` in viewport CSS pixels, for canvas-rendered UI that has no elements. |
+| `browser_act` | Use the latest snapshot ID to click, fill, press, select, check, hover, scroll, navigate, go back/forward, wait or extract. `mouse` sends raw pointer input (`click`, `double_click`, `right_click`, `move`, `drag`, `wheel`) at `x`/`y` in viewport CSS pixels, or `xRatio`/`yRatio` (0–1) to follow a viewport that changes size, for canvas-rendered UI that has no elements. Clicks glide, pause, press and hold like a person's, and a viewport that differs from the last screenshot is refused instead of clicked blindly. |
 | `browser_capture` | Save a screenshot when visual inspection is needed. |
 | `browser_webmcp_list` | Discover or narrow page tools with `query`; reuse an existing catalog while it remains valid. |
 | `browser_webmcp_call` | Call a matching page tool using `catalog`, `name` and `arguments`; success returns `nextCatalog` for another call. |

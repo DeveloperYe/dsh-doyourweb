@@ -95,7 +95,14 @@ export class BrowserEngine {
     this.queues = new Map();
     this.receipts = new Map();
     this.networks = new Map();
-    this.onRelease = ref => { this.states.delete(ref); this.networks.get(ref)?.close(); this.networks.delete(ref); };
+    // Last viewport seen while capturing, per tab. Pointer coordinates are only meaningful
+    // against the viewport they were measured in, and the browser chrome (a debugger infobar,
+    // for instance) can change it between two actions.
+    this.viewports = new Map();
+    // Playwright keeps its own cursor position, but we need one to draw a human-looking path.
+    this.pointerAt = new Map();
+    this.onRelease = ref => { this.states.delete(ref); this.networks.get(ref)?.close(); this.networks.delete(ref);
+      this.viewports.delete(ref); this.pointerAt.delete(ref); };
     this.bridge.on?.("release", this.onRelease);
   }
 
@@ -176,46 +183,134 @@ export class BrowserEngine {
   }
 
   /**
+   * Measure the viewport once it stops moving. Browser chrome (the debugger infobar, a download
+   * shelf, a permission bubble) is inserted asynchronously, so a single read can catch the layout
+   * before or during the change.
+   */
+  async settleViewport(page, attempts = 6) {
+    let previous;
+    for (let attempt = 0; attempt < attempts; attempt++) {
+      const current = await page.evaluate(() => ({
+        width: window.innerWidth, height: window.innerHeight,
+        devicePixelRatio: window.devicePixelRatio || 1,
+        scrollX: Math.round(window.scrollX), scrollY: Math.round(window.scrollY),
+      })).catch(() => undefined);
+      if (!current) return undefined;
+      if (previous && previous.width === current.width && previous.height === current.height
+        && previous.devicePixelRatio === current.devicePixelRatio) return current;
+      previous = current;
+      await new Promise(resolve => setTimeout(resolve, 50));
+    }
+    return previous;
+  }
+
+  /** Current viewport, in the space pointer coordinates live in. */
+  async measureViewport(page) {
+    const measured = await page.evaluate(() => ({ width: window.innerWidth, height: window.innerHeight,
+      devicePixelRatio: window.devicePixelRatio || 1 })).catch(() => null);
+    if (measured) return measured;
+    const fallback = page.viewportSize?.() || { width: 0, height: 0 };
+    return { ...fallback, devicePixelRatio: 1 };
+  }
+
+  /**
+   * Coordinates are only valid against the viewport they were measured in. Browser chrome can
+   * change that between two actions - attaching the debugger inserts an infobar, which shortens
+   * the page by roughly the height of that bar - so a stale coordinate lands somewhere else
+   * without any error. Refuse instead, and say what changed.
+   */
+  assertViewport(ref, current, action) {
+    const seen = this.viewports.get(ref);
+    if (!seen?.width || !current?.width) return;
+    const moved = seen.width !== current.width || seen.height !== current.height
+      || Math.abs((seen.devicePixelRatio || 1) - (current.devicePixelRatio || 1)) > 0.01;
+    if (!moved) return;
+    throw new Error(`Viewport changed since the screenshot (${seen.width}x${seen.height} at ${seen.devicePixelRatio}x `
+      + `→ ${current.width}x${current.height} at ${current.devicePixelRatio}x), so a pixel coordinate no longer points at `
+      + `the same place. Capture the tab again, or pass xRatio/yRatio so the point follows the viewport.`);
+  }
+
+  /**
    * Raw pointer input, for UIs that draw their controls instead of using elements: canvas
    * games, canvas maps, custom widgets. Coordinates are viewport CSS pixels with the origin at
    * the top-left of the visible area, which is the space browser_capture reports once its
-   * device pixels are divided by the reported devicePixelRatio.
+   * device pixels are divided by the reported devicePixelRatio. xRatio/yRatio (0..1) do the same
+   * job without pinning the value to the current viewport size.
+   *
+   * Clicks are dispatched the way a person produces them - glide to the point over several
+   * intermediate positions, pause, press, hold briefly, release - because canvas UIs often react
+   * to mousedown/mouseup separately and treat an instantaneous click as noise.
    */
-  async pointer(page, step, signal) {
+  async pointer(page, step, signal, ref) {
     checkpoint(signal);
     const action = step.action || "click";
     const button = step.button || "left";
-    const x = step.x, y = step.y;
-    if (action !== "wheel" && action !== "move" && (x === undefined || y === undefined)) {
-      throw new Error("mouse " + action + " requires x and y in viewport CSS pixels");
-    }
-    // page.viewportSize() is null for a browser attached over CDP, so ask the document instead.
-    const viewport = await page.evaluate(() => ({ width: window.innerWidth, height: window.innerHeight }))
-      .catch(() => null) || page.viewportSize?.() || { width: 0, height: 0 };
-    const limit = (value, axis) => {
+    const viewport = await this.measureViewport(page);
+    this.assertViewport(ref, viewport, action);
+    const clampRatio = value => Math.min(1, Math.max(0, value));
+    const point = (value, ratio, axis) => {
+      const size = axis === "x" ? viewport.width : viewport.height;
+      if (ratio !== undefined) return Math.round(clampRatio(ratio) * size);
       if (value === undefined) return undefined;
-      const max = axis === "x" ? viewport.width : viewport.height;
-      if (max && (value < 0 || value > max)) {
-        throw new Error(`mouse coordinates are outside the ${viewport.width}x${viewport.height} viewport; ` +
-          "divide browser_capture pixels by its devicePixelRatio");
+      if (size && (value < 0 || value > size)) {
+        throw new Error(`mouse coordinates are outside the ${viewport.width}x${viewport.height} viewport; `
+          + "divide browser_capture pixels by its devicePixelRatio, or pass xRatio/yRatio");
       }
       return value;
     };
-    const px = limit(x, "x"), py = limit(y, "y");
-    if (action === "move") await page.mouse.move(px ?? 0, py ?? 0);
+    const px = point(step.x, step.xRatio, "x"), py = point(step.y, step.yRatio, "y");
+    if (action !== "wheel" && action !== "move" && (px === undefined || py === undefined)) {
+      throw new Error(`mouse ${action} requires x and y, or xRatio and yRatio`);
+    }
+    const human = step.human !== false;
+    const hoverMs = Math.min(2000, Math.max(0, step.hoverMs ?? 70));
+    const holdMs = Math.min(2000, Math.max(0, step.holdMs ?? 90));
+    const wait = ms => new Promise(resolve => setTimeout(resolve, ms));
+    const glide = async (tx, ty) => {
+      const from = this.pointerAt.get(ref) || {
+        x: Math.min(Math.max(tx - 46, 0), viewport.width || tx),
+        y: Math.min(Math.max(ty - 30, 0), viewport.height || ty),
+      };
+      const distance = Math.hypot(tx - from.x, ty - from.y);
+      const steps = human ? Math.max(6, Math.min(40, Math.round(distance / 14))) : 1;
+      await page.mouse.move(tx, ty, { steps });
+      this.pointerAt.set(ref, { x: tx, y: ty });
+    };
+    const press = async () => {
+      await page.mouse.down({ button });
+      if (human) await wait(holdMs);
+      await page.mouse.up({ button });
+      checkpoint(signal);
+    };
+
+    if (action === "move") await glide(px ?? 0, py ?? 0);
     else if (action === "wheel") {
-      if (px !== undefined) await page.mouse.move(px, py);
+      if (px !== undefined) await glide(px, py);
       await page.mouse.wheel(0, step.amount || 600);
     } else if (action === "drag") {
-      if (step.toX === undefined || step.toY === undefined) throw new Error("mouse drag requires toX and toY");
-      const toX = limit(step.toX, "x"), toY = limit(step.toY, "y");
-      const steps = Math.max(1, Math.min(30, Math.round(step.durationMs ? step.durationMs / 50 : 10)));
-      await page.mouse.move(px, py);
+      if (step.toX === undefined && step.toRatioX === undefined) throw new Error("mouse drag requires toX and toY, or toRatioX and toRatioY");
+      const toX = point(step.toX, step.toRatioX, "x"), toY = point(step.toY, step.toRatioY, "y");
+      if (toX === undefined || toY === undefined) throw new Error("mouse drag requires toX and toY, or toRatioX and toRatioY");
+      await glide(px, py);
+      if (human) await wait(hoverMs);
       await page.mouse.down({ button });
-      try { await page.mouse.move(toX, toY, { steps }); }
-      finally { await page.mouse.up({ button }); }
-    } else if (action === "double_click") await page.mouse.dblclick(px, py, { button });
-    else await page.mouse.click(px, py, { button });
+      try {
+        const steps = Math.max(4, Math.min(30, Math.round((step.durationMs || 400) / 40)));
+        await page.mouse.move(toX, toY, { steps });
+        if (human) await wait(Math.min(400, holdMs));
+      } finally { await page.mouse.up({ button }); }
+      this.pointerAt.set(ref, { x: toX, y: toY });
+    } else if (action === "double_click") {
+      await glide(px, py);
+      if (human) await wait(hoverMs);
+      await press();
+      await wait(human ? 60 : 0);
+      await press();
+    } else {
+      await glide(px, py);
+      if (human) await wait(hoverMs);
+      await press();
+    }
     checkpoint(signal);
   }
 
@@ -275,7 +370,7 @@ export class BrowserEngine {
           else if (step.op === "scroll") {
             await page.mouse.wheel(0, step.amount || 600);
           } else if (step.op === "mouse") {
-            await this.pointer(page, step, signal);
+            await this.pointer(page, step, signal, ref);
           } else {
             const target = this.locator(page, step);
             if (activity && !["wait", "extract", "upload"].includes(step.op)) await activity.pulse(target, signal).catch(() => {});
@@ -420,11 +515,12 @@ export class BrowserEngine {
       // The PNG is in device pixels; mouse actions take CSS pixels. Reporting the ratio and the
       // viewport here is what lets a caller turn "the button looks like it is at (944, 678)"
       // into coordinates it can actually click.
-      const viewport = await page.evaluate(() => ({
-        width: window.innerWidth, height: window.innerHeight,
-        devicePixelRatio: window.devicePixelRatio || 1,
-        scrollX: Math.round(window.scrollX), scrollY: Math.round(window.scrollY),
-      })).catch(() => undefined);
+
+      // Let the browser finish inserting its own chrome (a debugger infobar appears when the
+      // extension attaches and disappears again when it detaches) before measuring: a viewport
+      // caught mid-animation would make every coordinate we hand out slightly wrong.
+      const viewport = await this.settleViewport(page);
+      if (viewport) this.viewports.set(ref, viewport);
       return { tab: ref, url: clip(page.url(), 512), path: output, mediaType: "image/png",
         fullPage: options.fullPage === true, ...(viewport ? { viewport } : {}) };
     }, signal));

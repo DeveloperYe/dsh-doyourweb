@@ -247,6 +247,23 @@ try {
   ] });
   assert.equal(pointer.completed.length, 1, JSON.stringify(pointer));
   assert.equal(await page.locator("#out").textContent(), "Pointer hit", "the pointer reached the stand-in surface");
+  // Ratio coordinates follow a viewport that changes size, which is what a debugger infobar does.
+  const ratioRead = await engine.read(tab.ref);
+  const vp = shot.viewport;
+  const ratio = await engine.act(tab.ref, { snapshot: ratioRead.snapshot, observe: "summary", steps: [
+    { op: "mouse", action: "click", xRatio: 100 / vp.width, yRatio: 180 / vp.height },
+  ] });
+  assert.equal(ratio.completed.length, 1, JSON.stringify(ratio));
+  assert.equal(await page.locator("#out").textContent(), "Pointer hit", "ratio coordinates resolve to the same point");
+
+  // A viewport that changed since the screenshot must be refused, not clicked blindly.
+  const guardRead = await engine.read(tab.ref);
+  engine.viewports.set(tab.ref, { ...vp, height: vp.height + 40 });
+  const guarded = await engine.act(tab.ref, { snapshot: guardRead.snapshot,
+    steps: [{ op: "mouse", action: "click", x: 100, y: 180 }] });
+  assert.match(guarded.failure?.error ?? "", /Viewport changed since the screenshot/);
+  engine.viewports.set(tab.ref, vp);
+
   const outside = await engine.read(tab.ref);
   // A step that fails after dispatch is reported in the result, not thrown.
   const rejected = await engine.act(tab.ref, { snapshot: outside.snapshot,

@@ -34,6 +34,28 @@ README 的浏览器面板图由当前组件使用已安装 DSH 的 React/UI 图�
 
 <a id="english"></a>
 
+## canvas 界面与坐标点击
+
+游戏引擎、canvas 地图、自绘控件这一类界面没有任何可点击的 DOM 元素，`ref` / `selector` 无从下手，只能用坐标。
+
+```json
+{"op":"mouse","action":"click","x":755,"y":542}
+{"op":"mouse","action":"drag","x":40,"y":180,"toX":300,"toY":180,"durationMs":400,"pressMs":200}
+{"op":"mouse","action":"wheel","x":600,"y":400,"amount":-800}
+```
+
+`action` 取 `click` / `double_click` / `right_click` / `move` / `drag` / `wheel`。
+
+**坐标系**：视口内 CSS 像素，原点在可见区域左上角，不是页面文档坐标（滚动不用换算）。`browser_capture` 会返回 `viewport: {width, height, devicePixelRatio, scrollX, scrollY}`；截图是**设备像素**，要**除以 `devicePixelRatio`** 才是可点击坐标，2 倍屏尤其容易算错。
+
+**坐标什么时候会失效，插件怎么处理**：视口尺寸或缩放比与上次截图不一致、或坐标超出视口时，动作会被**拒绝**并报出前后尺寸，而不是盲点。最常见的诱因是扩展 attach 调试器时浏览器插入的那条信息栏（约 30–40px，页面因此变矮、布局重排），detach 后又复原。遇到就重新 `browser_capture` 再算。
+
+**比例坐标**：`xRatio` / `yRatio`（0–1，拖拽用 `toXRatio` / `toYRatio`）按当前视口实时换算。对整体缩放适配视口的 canvas 游戏尤其有效——视口高矮变化后，目标仍在同一相对位置。
+
+**像人一样发事件**：点击会滑行到位（按距离 6–40 个中间点）→ 悬停 70ms → 按下 → 保持 90ms → 松开；拖拽按 ease-in-out 分配中间位置（起点加速、落点减速），`easing:"linear"` 可关闭；`pressMs` 让按下后先原地点住再移动，适配"按住一会儿才开始拖动"的界面。`human:false`、`hoverMs`、`holdMs` 可微调节奏。
+
+> 能用 `ref` 就别用坐标：元素引用跟着无障碍树走，窗口缩放、滚动、重新布局都不会失效。坐标只在没有元素可引用的界面上才必要。
+
 ## English
 
 Open **Browser** in DSH's left navigation to show the current session's right panel. **Pages**, **Apps** and **Open logs** share the panel. Selecting a page or app appends a reference to the current draft, preserving text, references and attachments. The `@` menu remains available; the human sends the draft. Without an open conversation, the panel can still list objects and open setup.
@@ -51,3 +73,43 @@ Diagnostics keep up to 600 in-memory metadata events: correlated command stages,
 Use `browser_network_requests` with `action: "start"` before the activity. Capture cannot recover past traffic and never reloads/replays requests. `list` (the default) returns 10 entries, up to 20, with `query`, `errorsOnly`, `includeStatic` and `afterId` filters. Use the returned `nextAfterId` for pagination. Successful static resources are hidden by default. `details` plus `requestId` returns timing/MIME metadata; `clear` removes entries and `stop` removes listeners.
 
 Capture retains up to 200 entries, evicts older entries and clears on idle debugger detach. `capturingSince` states the start time. Only HTTP(S) methods, redacted URLs, resource types, statuses and timing are recorded. URL queries, fragments, credentials, headers and bodies are excluded; URL paths may still contain site-specific identifiers.
+
+## Canvas interfaces and coordinate clicks
+
+Game engines, canvas maps and hand-drawn widgets expose no clickable DOM at all, so `ref` and
+`selector` have nothing to work with; those need coordinates.
+
+```json
+{"op":"mouse","action":"click","x":755,"y":542}
+{"op":"mouse","action":"drag","x":40,"y":180,"toX":300,"toY":180,"durationMs":400,"pressMs":200}
+{"op":"mouse","action":"wheel","x":600,"y":400,"amount":-800}
+```
+
+`action` is one of `click`, `double_click`, `right_click`, `move`, `drag`, `wheel`.
+
+**Coordinates** are viewport CSS pixels with the origin at the top-left of the visible area, not
+document coordinates (scrolling needs no correction). `browser_capture` returns
+`viewport: {width, height, devicePixelRatio, scrollX, scrollY}`; the screenshot is in **device
+pixels**, so **divide by `devicePixelRatio`** to get a clickable point - a 2x display makes this
+easy to get wrong by a factor of two.
+
+**When a coordinate stops being valid**: if the viewport size or ratio differs from the last
+screenshot, or the point falls outside the viewport, the action is **refused** with both sizes
+reported instead of clicking somewhere else. The usual cause is the infobar the browser inserts
+while the extension holds the debugger (roughly 30-40px, which shortens the page and reflows it),
+and the reversal when it detaches. Capture again and recompute.
+
+**Ratio coordinates**: `xRatio` / `yRatio` (0-1, and `toXRatio` / `toYRatio` for drag) are
+multiplied by the current viewport, so a point defined as a fraction of the page survives a
+viewport that changes height - exactly what a canvas game scaled to fit needs.
+
+**Events shaped like a person's**: a click glides to the point over 6-40 intermediate positions,
+pauses 70ms, presses, holds 90ms and releases; a drag spreads its intermediate positions over an
+ease-in-out curve (accelerating away from the press point, decelerating into the drop point) unless
+`easing:"linear"` is given, and `pressMs` holds still before moving for handlers that only start
+dragging after a delay. `human:false`, `hoverMs` and `holdMs` tune the pacing.
+
+> Prefer `ref` whenever an element exists: references follow the accessibility tree, so resizing,
+> scrolling and re-layout do not invalidate them. Coordinates are only necessary where there is
+> nothing to reference.
+

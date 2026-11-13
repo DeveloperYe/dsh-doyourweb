@@ -1,5 +1,25 @@
 # 更新记录
 
+## 0.9.15 · 2026-11-14
+
+合并上游 `SheepofSheep/dsh-doyourweb` 0.1.9 → 0.2.3 中**修正我们已有行为缺陷**的三项
+（上游 4 个提交 / 35 文件 / +1013 −147，其余属它的侧栏 UI、菜单候选与批注队列，本 fork 不适用）。
+
+- **读 DOM 改用唯一根**（上游 0.2.3 · `418b2d9`）：根从 `body` 改成 `xpath=/html/body`。
+  Shadow DOM 里可能自带一个 `body`，裸 `body` 定位会撞上 strict mode violation；现在不会再碰。
+  同时把"读取范围内匹配到多个根"从原始的定位器报错改成可操作提示：
+  `Read scope matches multiple elements. Choose one unique root (for example their common parent), or read each scope separately.`
+- **导航前置校验**（上游 0.2.3 · `418b2d9`）：一批动作里只要有一个 `navigate` 缺 `step.value`
+  或协议不受支持，**在任何动作执行前**整批拒绝，并明确 `No actions were performed`。
+  旧行为是走到那一步才报错，前面几步的副作用已经落下了。
+- **Windows 应用枚举容错**（上游 0.2.1/0.2.2 · `8dccf89` `63a5755`）：读不到 `Path` /
+  `StartTime` / `MainModule` 的受保护进程**只跳过它自己**，其余应用照常列出，不再整张列表失败。
+
+验收：真实 Chromium 新增两条断言（含无效导航的批次必须一步都不执行、多根读取必须给出可操作提示），
+`npm test` 229/229、`verify:input`、`test:generated`、`verify:host`、`test:browser` 7 段全绿。
+Windows 枚举改动在本机（session 0，无可见窗口）只能验证脚本可正常执行、不再抛错；
+受保护进程那条路径需要在有桌面会话的机器上才会触发。
+
 ## 0.9.14 · 2026-11-12
 
 标签引用失效时，错误只说"重新 @ 一个页面"——但**agent 没法替你按 @**，它读到这句话只能停下等人。

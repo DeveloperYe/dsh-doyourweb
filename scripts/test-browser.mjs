@@ -264,6 +264,21 @@ try {
   assert.match(guarded.failure?.error ?? "", /Viewport changed since the screenshot/);
   engine.viewports.set(tab.ref, vp);
 
+  // A batch whose navigation is invalid must be refused before any earlier step runs.
+  const preflightRead = await engine.read(tab.ref);
+  await page.locator("#name").fill("");
+  await assert.rejects(engine.act(tab.ref, { snapshot: preflightRead.snapshot, steps: [
+    { op: "fill", selector: "#name", value: "should not run" },
+    { op: "navigate" },
+  ] }), /navigate requires a URL in step\.value[\s\S]*No actions were performed/);
+  assert.equal(await page.locator("#name").inputValue(), "", "the earlier step must not have run");
+  await assert.rejects(engine.act(tab.ref, { snapshot: preflightRead.snapshot, steps: [
+    { op: "navigate", value: "javascript:alert(1)" },
+  ] }), /HTTP\/HTTPS or local file URL[\s\S]*No actions were performed/);
+
+  // A read scope that matches several roots must say so instead of failing with a raw locator error.
+  await assert.rejects(engine.read(tab.ref, { selector: "nav, main" }), /Read scope matches multiple elements/);
+
   // A drag must move in several steps (easing), and pressMs must hold still before moving.
   const dragSurface = page.locator("#canvas-like");
   const pressesBefore = Number(await dragSurface.getAttribute("data-down") || 0);

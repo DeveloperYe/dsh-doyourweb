@@ -54,11 +54,20 @@ if (-not ('DshVisibleWindows' -as [type])) { throw 'Windows window inventory cou
 $processes=@{}
 @(foreach ($window in [DshVisibleWindows]::List()) {
     if (-not $processes.ContainsKey($window.pid)) {
-        $p=Get-Process -Id $window.pid
-        if (-not $p) { continue }
-        $info=$p.MainModule.FileVersionInfo
-        $processes[$window.pid]=[pscustomobject]@{ Id=$p.Id; ProcessName=$p.ProcessName; Path=$p.Path;
-            Started=$p.StartTime.ToUniversalTime().Ticks.ToString(); Product=$info.ProductName; DisplayName=$info.FileDescription }
+        # Reading Path, StartTime or MainModule throws for a protected process. Skip that one
+        # window rather than losing the whole inventory: every other app stays referenceable.
+        try {
+            $p=Get-Process -Id $window.pid -ErrorAction Stop
+            if (-not $p) { $processes[$window.pid]=$null; continue }
+            $path=$p.Path
+            $started=$p.StartTime.ToUniversalTime().Ticks.ToString()
+            $info=$p.MainModule.FileVersionInfo
+            $processes[$window.pid]=[pscustomobject]@{ Id=$p.Id; ProcessName=$p.ProcessName; Path=$path;
+                Started=$started; Product=$info.ProductName; DisplayName=$info.FileDescription }
+        } catch {
+            $processes[$window.pid]=$null
+            continue
+        }
     }
     $p=$processes[$window.pid]
     if (-not $p) { continue }

@@ -142,14 +142,22 @@ export class BrowserEngine {
     checkpoint(signal);
     const before = await this.document(page);
     if (!canControl(before.url)) throw new Error("This tab navigated to an unsupported URL");
-    let root = page.locator("body");
+    // The document body specifically: a shadow root can contain its own body element, and a bare
+    // "body" locator then matches several nodes and fails with a strict mode violation.
+    let root = page.locator("xpath=/html/body");
     if (options.scope === "main") {
       const main = page.locator("main, [role='main']");
       if (await main.count() === 1 && await main.isVisible()) root = main;
     }
     if (options.selector) root = page.locator(options.selector);
     if (options.query) root = root.getByText(options.query, { exact: false });
-    const text = await root.ariaSnapshot({ mode: "ai", depth: options.depth || 8, timeout: 8000, signal });
+    let text;
+    try {
+      text = await root.ariaSnapshot({ mode: "ai", depth: options.depth || 8, timeout: 8000, signal });
+    } catch (error) {
+      if (!String(error?.message || "").includes("strict mode violation")) throw error;
+      throw new Error("Read scope matches multiple elements. Choose one unique root (for example their common parent), or read each scope separately.");
+    }
     const after = await this.document(page);
     checkpoint(signal);
     if (before.epoch !== after.epoch || before.url !== after.url) throw new Error("Page navigated while reading; read it again");
@@ -358,6 +366,16 @@ export class BrowserEngine {
         throw new Error("Snapshot is stale. Call browser_read before acting; no actions were performed.");
       }
       if (state.refsAvailable === false && options.steps.some(step => step.ref || step.toRef)) throw new Error("Handle receipt withheld element refs. Read its cursor before using refs, or continue with selectors; old refs must not be reused.");
+      // Validate every navigation before the first action runs. Failing at step N used to leave the
+      // earlier steps' effects behind, which is worse than refusing the whole batch up front.
+      for (const step of options.steps) if (step.op === "navigate") {
+        if (!step.value?.trim()) {
+          throw new Error('navigate requires a URL in step.value, for example {"op":"navigate","value":"https://example.com"}. No actions were performed.');
+        }
+        if (!canControl(step.value)) {
+          throw new Error("navigate step.value must be an HTTP/HTTPS or local file URL. No actions were performed.");
+        }
+      }
       const uploads = new Map();
       for (const [index, step] of options.steps.entries()) if (step.op === "upload" || step.op === "drop" && step.files) {
         if (!Array.isArray(step.files) || !step.files.length || step.files.length > 20) throw new Error("Upload requires 1-20 explicitly authorized absolute file paths");
@@ -388,7 +406,7 @@ export class BrowserEngine {
           checkpoint(signal);
           attempted = !["wait", "extract"].includes(step.op);
           if (step.op === "navigate") {
-            if (!canControl(step.value)) throw new Error("Only HTTP/HTTPS or local file navigation is supported");
+            // Already validated up front; goto still guards the value against a missing protocol.
             await page.goto(step.value, { waitUntil: "domcontentloaded", signal });
           } else if (step.op === "back") await page.goBack({ waitUntil: "domcontentloaded", signal });
           else if (step.op === "forward") await page.goForward({ waitUntil: "domcontentloaded", signal });

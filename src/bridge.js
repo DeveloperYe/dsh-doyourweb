@@ -851,9 +851,9 @@ export class BrowserBridge extends EventEmitter {
   resolve(ref) {
     const { profile: id, tabId } = parseRef(ref);
     const profile = this.profiles.get(id);
-    if (!profile) throw new Error("Browser extension is offline or its browser session ended. Open /browser to connect, then select the tab with @ again.");
+    if (!profile) throw new Error("Browser extension is offline or its browser session ended. The old reference belongs to a browser session that has since ended; open a fresh tab with browser_open and use its reference, or have the user select the tab with @ again.");
     const tab = profile.tabs.get(tabId);
-    if (!tab) throw new Error("Referenced browser tab is closed or unsupported. Select a tab with @ again.");
+    if (!tab) throw new Error("Referenced browser tab is closed or unsupported. Open a fresh tab with browser_open and use its reference instead, or have the user select the tab with @ again.");
     return { profile, tab, tabId };
   }
 
@@ -897,7 +897,7 @@ export class BrowserBridge extends EventEmitter {
   async closeTab(ref, { timeoutMs = 5000 } = {}) {
     const { profile: id, tabId } = parseRef(ref);
     const profile = this.profiles.get(id);
-    if (!profile) throw new Error("Browser extension is offline or its browser session ended. Open /browser to connect again.");
+    if (!profile) throw new Error("Browser extension is offline or its browser session ended. Open /browser to connect again. Once it is connected, open a fresh tab with browser_open, or have the user select the tab with @ again.");
     if (profile.ws?.readyState !== WebSocket.OPEN) throw new Error("Browser extension disconnected");
     const tab = profile.tabs?.get(tabId);
     const relay = [...this.relays.values()].find(entry => entry.profile === profile && entry.tabId === tabId);

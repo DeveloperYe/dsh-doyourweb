@@ -1,5 +1,22 @@
 # 更新记录
 
+## 0.9.14 · 2026-11-12
+
+标签引用失效时，错误只说"重新 @ 一个页面"——但**agent 没法替你按 @**，它读到这句话只能停下等人。
+而实际上 agent 自己就能解决：`browser_open` 不需要任何已授权标签，开完即自动获得该标签的授权。
+
+四处文案改成同时给出两条路：
+
+- 引用指向的标签已关闭或不支持 →
+  `… Open a fresh tab with browser_open and use its reference instead, or have the user select the tab with @ again.`
+- 引用所属的浏览器会话已结束（浏览器重启、扩展重载、DSH 重启）→ 同上，并说明"旧引用属于已结束的会话"
+- 本轮对话还没有授权标签 → `Open one with browser_open, or ask the user to select a tab with @ …`
+- 引用的标签不是用户 @ 的 → 明确"用 browser_open 打开的标签也算已授权"
+
+新增断言：未知浏览器引用的错误必须同时包含 `browser_open` 与 `@ again` 两个可选出路。
+
+顺带把上一版漏掉的 `docs/browser-workflow.md` 坐标点击章节带进包里（0.9.13 发布后才补的）。
+
 ## 0.9.13 · 2026-11-12
 
 0.9.12 让点击像人，但拖拽还是等速直线——真人拖拽有加速与减速，而列表惯性滚动、滑块吸附、卡牌拖出这类

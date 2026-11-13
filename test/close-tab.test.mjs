@@ -57,6 +57,13 @@ test("browser_close refuses a disconnected or unknown browser without sending", 
     let sent = 0;
     bridge.request = async () => { sent++; return {}; };
     await assert.rejects(() => bridge.closeTab("dsh-browser://runtime/7"), /offline|session ended/);
+    // The error has to tell the caller what to do next: an agent reading it cannot ask the user
+    // on its own behalf, so the alternative (open a fresh tab) belongs in the message.
+    await assert.rejects(() => bridge.closeTab("dsh-browser://runtime/7"), /browser_open/);
+    await assert.rejects(() => bridge.closeTab("dsh-browser://runtime/7"), (error) => {
+      assert.match(error.message, /select the tab with @ again/, "and the manual alternative stays visible");
+      return true;
+    });
     const profile = fakeProfile();
     profile.ws.readyState = 3;
     bridge.profiles.set("runtime", profile);

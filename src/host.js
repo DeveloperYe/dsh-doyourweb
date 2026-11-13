@@ -221,10 +221,10 @@ export async function apply(ctx, config = {}) {
       if (live.length === 1) return bind(live[0]);
     }
     if (!allowed.size) {
-      throw new Error("No browser tab is authorized in this conversation. Ask the user to select the tab with @ before controlling it.");
+      throw new Error("No browser tab is authorized in this conversation. Open one with browser_open, or ask the user to select a tab with @ before controlling it.");
     }
     if (!args.tab) throw new Error("Several browser tabs are authorized; pass the tab reference the user cited.");
-    throw new Error("That tab was not referenced by the user in this conversation. Only tabs selected with @ can be controlled.");
+    throw new Error("That tab was not referenced by the user in this conversation. Only tabs selected with @, or tabs this conversation opened with browser_open, can be controlled.");
   }
 
   function authorizeUploads(steps, exec) {
